@@ -5,8 +5,9 @@ import type { McpTool, McpToolResult } from '../protocol.js';
 import { createToolResult } from '../protocol.js';
 import type { SessionConfig } from '../../db/types.js';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
-import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession } from '../../db/queries.js';
-import { claimCreateSchema, claimCheckSchema, claimReleaseSchema, claimListSchema, validateInput } from '../schemas.js';
+import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession, updateClaimPriority, logAuditEvent, notifyQueueOnClaimRelease } from '../../db/queries.js';
+import { claimCreateSchema, claimCheckSchema, claimReleaseSchema, claimListSchema, claimUpdatePrioritySchema, validateInput } from '../schemas.js';
+import { getPriorityLevel } from '../../db/types.js';
 import {
   errorResponse,
   successResponse,
@@ -61,6 +62,10 @@ export const claimTools: McpTool[] = [
           type: 'string',
           enum: ['small', 'medium', 'large'],
           description: 'Estimated scope: small(<30min), medium(30min-2hr), large(>2hr)',
+        },
+        priority: {
+          type: 'number',
+          description: 'Priority (0-100). Levels: critical (90-100), high (70-89), normal (40-69, default: 50), low (0-39)',
         },
       },
       required: ['session_id', 'intent'],
@@ -155,6 +160,32 @@ export const claimTools: McpTool[] = [
       },
     },
   },
+  {
+    name: 'collab_claim_update_priority',
+    description: 'Update the priority of an existing claim. Higher priority claims take precedence in queue ordering.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Your session ID',
+        },
+        claim_id: {
+          type: 'string',
+          description: 'Claim ID to update',
+        },
+        priority: {
+          type: 'number',
+          description: 'New priority (0-100). Levels: critical (90-100), high (70-89), normal (40-69), low (0-39)',
+        },
+        reason: {
+          type: 'string',
+          description: 'Optional reason for priority change',
+        },
+      },
+      required: ['session_id', 'claim_id', 'priority'],
+    },
+  },
 ];
 
 export async function handleClaimTool(
@@ -170,8 +201,9 @@ export async function handleClaimTool(
         return validationError(validation.error);
       }
 
-      const { session_id: sessionId, files, symbols, intent, scope = 'medium' } = validation.data;
+      const { session_id: sessionId, files, symbols, intent, scope = 'medium', priority = 50 } = validation.data;
       const hasSymbols = symbols && symbols.length > 0;
+      const priorityInfo = getPriorityLevel(priority);
 
       // Verify session exists and is active
       const sessionResult = await validateActiveSession(db, sessionId);
@@ -195,7 +227,17 @@ export async function handleClaimTool(
         files: fileList,
         intent,
         scope,
+        priority,
         symbols: hasSymbols ? symbols : undefined,
+      });
+
+      // Log audit event for claim creation
+      await logAuditEvent(db, {
+        session_id: sessionId,
+        action: 'claim_created',
+        entity_type: 'claim',
+        entity_id: claim.id,
+        metadata: { files: fileList, intent, scope, priority },
       });
 
       // Check for conflicts AFTER creating claim
@@ -204,6 +246,21 @@ export async function handleClaimTool(
       const conflicts = await checkConflicts(db, fileList, sessionId, symbols);
 
       if (conflicts.length > 0) {
+        // Log conflict detection
+        for (const conflict of conflicts) {
+          await logAuditEvent(db, {
+            session_id: sessionId,
+            action: 'conflict_detected',
+            entity_type: 'claim',
+            entity_id: claim.id,
+            metadata: {
+              conflicting_session_id: conflict.session_id,
+              conflicting_session_name: conflict.session_name ?? undefined,
+              files: [conflict.file_path],
+            },
+          });
+        }
+
         // Group conflicts by type (file vs symbol)
         const fileConflicts = conflicts.filter((c) => c.conflict_level === 'file');
         const symbolConflicts = conflicts.filter((c) => c.conflict_level === 'symbol');
@@ -247,6 +304,7 @@ export async function handleClaimTool(
           symbols: hasSymbols ? symbols : undefined,
           intent,
           scope,
+          priority: priorityInfo,
           message: hasSymbols
             ? 'Symbol-level claim created. Other sessions can work on different symbols in the same file.'
             : 'Claim created successfully. Other sessions will be warned about these files.',
@@ -504,6 +562,18 @@ export async function handleClaimTool(
       const isOwnClaim = claim.session_id === sessionId;
       await releaseClaim(db, claimId, { status, summary });
 
+      // Log audit event for claim release
+      await logAuditEvent(db, {
+        session_id: sessionId,
+        action: 'claim_released',
+        entity_type: 'claim',
+        entity_id: claimId,
+        metadata: { status, files: claim.files },
+      });
+
+      // Notify sessions in queue that the claim is released
+      const notifiedCount = await notifyQueueOnClaimRelease(db, claimId, sessionId, claim.files);
+
       return createToolResult(
         JSON.stringify({
           success: true,
@@ -513,6 +583,7 @@ export async function handleClaimTool(
           files: claim.files,
           summary: summary ?? null,
           was_forced: !isOwnClaim,
+          notified_sessions: notifiedCount,
         })
       );
     }
@@ -535,12 +606,75 @@ export async function handleClaimTool(
           files: c.files,
           intent: c.intent,
           scope: c.scope,
+          priority: getPriorityLevel(c.priority),
           status: c.status,
           created_at: c.created_at,
           completed_summary: c.completed_summary,
         })),
         total: claims.length,
       }, true);
+    }
+
+    case 'collab_claim_update_priority': {
+      // Validate input with Zod schema
+      const validation = validateInput(claimUpdatePrioritySchema, args);
+      if (!validation.success) {
+        return validationError(validation.error);
+      }
+
+      const { session_id: sessionId, claim_id: claimId, priority, reason } = validation.data;
+
+      // Verify session is active
+      const sessionResult = await validateActiveSession(db, sessionId);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
+      }
+
+      // Get the claim
+      const claim = await getClaim(db, claimId);
+      if (!claim) {
+        return errorResponse(ERROR_CODES.CLAIM_NOT_FOUND, 'Claim not found');
+      }
+
+      // Verify ownership
+      if (claim.session_id !== sessionId) {
+        return errorResponse(ERROR_CODES.NOT_OWNER, 'You can only update priority of your own claims');
+      }
+
+      if (claim.status !== 'active') {
+        return errorResponse(ERROR_CODES.CLAIM_ALREADY_RELEASED, `Claim is ${claim.status}, cannot update priority`);
+      }
+
+      const oldPriority = getPriorityLevel(claim.priority);
+      const newPriority = getPriorityLevel(priority);
+
+      // Update priority
+      const updated = await updateClaimPriority(db, claimId, priority);
+      if (!updated) {
+        return errorResponse(ERROR_CODES.CLAIM_NOT_FOUND, 'Failed to update priority');
+      }
+
+      // Log audit event for priority change
+      await logAuditEvent(db, {
+        session_id: sessionId,
+        action: 'priority_changed',
+        entity_type: 'claim',
+        entity_id: claimId,
+        metadata: {
+          old_value: claim.priority,
+          new_value: priority,
+          reason,
+        },
+      });
+
+      return successResponse({
+        success: true,
+        claim_id: claimId,
+        old_priority: oldPriority,
+        new_priority: newPriority,
+        reason: reason ?? null,
+        message: `Priority updated from ${oldPriority.level} (${oldPriority.value}) to ${newPriority.level} (${newPriority.value})`,
+      });
     }
 
     default:

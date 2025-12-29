@@ -20,6 +20,9 @@ import { claimTools, handleClaimTool } from './tools/claim';
 import { messageTools, handleMessageTool } from './tools/message';
 import { decisionTools, handleDecisionTool } from './tools/decision';
 import { lspTools, handleLspTool } from './tools/lsp';
+import { historyTools, handleHistoryTool } from './tools/history';
+import { queueTools, handleQueueTool } from './tools/queue';
+import { notificationTools, handleNotificationTool } from './tools/notification';
 import type { AuthContext } from '../auth/types';
 import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from '../constants.js';
 
@@ -33,7 +36,7 @@ const CAPABILITIES: McpCapabilities = {
 };
 
 // Combine all tools
-const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools, ...lspTools];
+const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools, ...lspTools, ...historyTools, ...queueTools, ...notificationTools];
 
 export class McpServer {
   private authContext?: AuthContext;
@@ -101,6 +104,7 @@ export class McpServer {
       if (name.startsWith('collab_session_') || name === 'collab_status_update' || name === 'collab_config') {
         result = await handleSessionTool(this.db, name, args, userId);
       } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
+        // Includes: collab_claim, collab_claims_list, collab_claim_update_priority, collab_check, collab_release
         result = await handleClaimTool(this.db, name, args);
       } else if (name.startsWith('collab_message_')) {
         result = await handleMessageTool(this.db, name, args);
@@ -113,6 +117,12 @@ export class McpServer {
         name === 'collab_impact_analysis'
       ) {
         result = await handleLspTool(this.db, name, args);
+      } else if (name === 'collab_history_list') {
+        result = await handleHistoryTool(this.db, name, args);
+      } else if (name.startsWith('collab_queue_')) {
+        result = await handleQueueTool(this.db, name, args);
+      } else if (name.startsWith('collab_notifications_')) {
+        result = await handleNotificationTool(this.db, name, args);
       } else {
         result = createToolResult(`Unknown tool: ${name}`, true);
       }
@@ -151,6 +161,7 @@ export async function handleMcpRequest(
     if (name.startsWith('collab_session_') || name === 'collab_status_update' || name === 'collab_config') {
       return await handleSessionTool(db, name, args);
     } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
+      // Includes: collab_claim, collab_claims_list, collab_claim_update_priority, collab_check, collab_release
       return await handleClaimTool(db, name, args);
     } else if (name.startsWith('collab_message_')) {
       return await handleMessageTool(db, name, args);
@@ -163,6 +174,12 @@ export async function handleMcpRequest(
       name === 'collab_impact_analysis'
     ) {
       return await handleLspTool(db, name, args);
+    } else if (name === 'collab_history_list') {
+      return await handleHistoryTool(db, name, args);
+    } else if (name.startsWith('collab_queue_')) {
+      return await handleQueueTool(db, name, args);
+    } else if (name.startsWith('collab_notifications_')) {
+      return await handleNotificationTool(db, name, args);
     } else {
       return createToolResult(`Unknown tool: ${name}`, true);
     }

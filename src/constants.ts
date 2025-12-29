@@ -199,12 +199,69 @@ Response: {
 - **medium**: Many references (>10) but no active claims conflict
 - **low**: Few references, no conflicts
 
+## Priority System
+
+Claims have priority levels (0-100):
+- **Critical (90-100)**: Urgent production fixes
+- **High (70-89)**: Important features
+- **Normal (40-69)**: Regular work (default: 50)
+- **Low (0-39)**: Nice-to-have changes
+
+Set priority when claiming:
+\`\`\`json
+{
+  "session_id": "...",
+  "files": ["src/critical-bug.ts"],
+  "intent": "Fix production crash",
+  "priority": 95
+}
+\`\`\`
+
+Use \`collab_claim_update_priority\` to escalate urgent work.
+
+## Claim Queue
+
+When blocked by another claim, join the waiting queue:
+
+1. **Join queue**: \`collab_queue_join\` with the blocked claim's ID
+2. **Check notifications**: \`collab_notifications_list\` for \`queue_ready\` notification
+3. **When notified**: Proceed with your work
+
+Higher priority claims are served first within the queue.
+
+Queue tools:
+- \`collab_queue_join\`: Join waiting queue for a blocked claim
+- \`collab_queue_leave\`: Leave the queue if no longer needed
+- \`collab_queue_list\`: View queue status
+
+## Notifications
+
+Check \`collab_notifications_list\` periodically for:
+- **claim_released**: Claim you waited for is now available
+- **queue_ready**: You're next in queue, proceed with your work
+- **conflict_detected**: Someone claimed files you're interested in
+- **session_message**: Direct message from another session
+
+Mark notifications as read with \`collab_notifications_mark_read\`.
+
+## Audit History
+
+Use \`collab_history_list\` to debug coordination issues:
+- Track session starts/ends
+- View claim creation/release history
+- Identify conflict patterns
+- Monitor queue activity
+
+Filter by session, action type, or date range. Entries auto-deleted after 7 days.
+
 ## Best Practices
 
 - **Prefer symbol-level claims** for focused changes (single function/class)
 - **Use file-level claims** for large refactors affecting many symbols
 - **Use LSP validation** when unsure about symbol names
 - **Check references** before modifying widely-used symbols
+- **Set appropriate priority** for urgent work (95+ for production fixes)
+- **Check notifications** when waiting for blocked claims
 - Claim early, release when done
 - Use descriptive intents (e.g., "Refactoring validateToken for JWT support")
 `.trim();

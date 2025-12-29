@@ -3,7 +3,7 @@
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol.js';
 import { createToolResult } from '../protocol.js';
-import { sendMessage, listMessages } from '../../db/queries.js';
+import { sendMessage, listMessages, createNotification, listSessions } from '../../db/queries.js';
 import { validateInput, messageSendSchema, messageListSchema } from '../schemas.js';
 import {
   errorResponse,
@@ -95,6 +95,41 @@ export async function handleMessageTool(
         to_session_id: input.to_session_id,
         content: input.content,
       });
+
+      // Create notification(s) for the message
+      const senderName = senderResult.session.name ?? 'Unknown session';
+      const contentPreview = input.content.length > 50
+        ? input.content.substring(0, 50) + '...'
+        : input.content;
+
+      if (input.to_session_id) {
+        // Direct message - notify target session
+        await createNotification(db, {
+          session_id: input.to_session_id,
+          type: 'session_message',
+          title: `Message from ${senderName}`,
+          message: contentPreview,
+          reference_type: 'message',
+          reference_id: message.id,
+          metadata: { from_session_id: input.from_session_id, from_session_name: senderName },
+        });
+      } else {
+        // Broadcast - notify all active sessions except sender
+        const allSessions = await listSessions(db, { include_inactive: false });
+        for (const session of allSessions) {
+          if (session.id !== input.from_session_id) {
+            await createNotification(db, {
+              session_id: session.id,
+              type: 'session_message',
+              title: `Broadcast from ${senderName}`,
+              message: contentPreview,
+              reference_type: 'message',
+              reference_id: message.id,
+              metadata: { from_session_id: input.from_session_id, from_session_name: senderName, is_broadcast: true },
+            });
+          }
+        }
+      }
 
       return successResponse({
         success: true,

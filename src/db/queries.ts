@@ -15,6 +15,11 @@ import type {
   SessionProgress,
   SessionConfig,
   SymbolClaim,
+  AuditAction,
+  AuditEntityType,
+  AuditHistoryEntry,
+  AuditHistoryWithSession,
+  AuditMetadata,
 } from './types';
 import { generateId } from '../utils/crypto.js';
 
@@ -260,19 +265,21 @@ export async function createClaim(
     intent: string;
     scope?: ClaimScope;
     symbols?: SymbolClaim[];
+    priority?: number;
   }
 ): Promise<{ claim: Claim; files: string[]; symbols?: SymbolClaim[] }> {
   const id = generateId();
   const now = new Date().toISOString();
   const scope = params.scope ?? 'medium';
+  const priority = params.priority ?? 50;
 
   // Batch insert: claim + all file paths in single transaction
   const claimStatement = db
     .prepare(
-      `INSERT INTO claims (id, session_id, intent, scope, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'active', ?, ?)`
+      `INSERT INTO claims (id, session_id, intent, scope, priority, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
     )
-    .bind(id, params.session_id, params.intent, scope, now, now);
+    .bind(id, params.session_id, params.intent, scope, priority, now, now);
 
   const fileStatements = params.files.map((filePath) => {
     const isPattern = filePath.includes('*') ? 1 : 0;
@@ -306,6 +313,7 @@ export async function createClaim(
       intent: params.intent,
       scope,
       status: 'active',
+      priority,
       created_at: now,
       updated_at: now,
       completed_summary: null,
@@ -315,12 +323,27 @@ export async function createClaim(
   };
 }
 
+export async function updateClaimPriority(
+  db: DatabaseAdapter,
+  claimId: string,
+  priority: number
+): Promise<boolean> {
+  const now = new Date().toISOString();
+
+  const result = await db
+    .prepare('UPDATE claims SET priority = ?, updated_at = ? WHERE id = ? AND status = ?')
+    .bind(priority, now, claimId, 'active')
+    .run();
+
+  return result.meta.changes > 0;
+}
+
 export async function getClaim(db: DatabaseAdapter, id: string): Promise<ClaimWithFiles | null> {
   // Single query with JOIN to avoid N+1 problem
   const result = await db
     .prepare(
       `SELECT
-        c.id, c.session_id, c.intent, c.scope, c.status,
+        c.id, c.session_id, c.intent, c.scope, c.priority, c.status,
         c.created_at, c.updated_at, c.completed_summary,
         s.name as session_name,
         GROUP_CONCAT(cf.file_path, '|||') as file_paths
@@ -340,6 +363,7 @@ export async function getClaim(db: DatabaseAdapter, id: string): Promise<ClaimWi
     session_id: result.session_id,
     intent: result.intent,
     scope: result.scope,
+    priority: result.priority,
     status: result.status,
     created_at: result.created_at,
     updated_at: result.updated_at,
@@ -860,4 +884,458 @@ export async function clearSessionReferences(
     .run();
 
   return result.meta.changes;
+}
+
+// ============ Audit History Queries ============
+
+export async function logAuditEvent(
+  db: DatabaseAdapter,
+  params: {
+    session_id?: string;
+    action: AuditAction;
+    entity_type: AuditEntityType;
+    entity_id: string;
+    metadata?: AuditMetadata;
+  }
+): Promise<AuditHistoryEntry> {
+  const id = generateId();
+  const now = new Date().toISOString();
+  const metadataJson = params.metadata ? JSON.stringify(params.metadata) : null;
+
+  await db
+    .prepare(
+      `INSERT INTO audit_history (id, session_id, action, entity_type, entity_id, metadata, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(id, params.session_id ?? null, params.action, params.entity_type, params.entity_id, metadataJson, now)
+    .run();
+
+  return {
+    id,
+    session_id: params.session_id ?? null,
+    action: params.action,
+    entity_type: params.entity_type,
+    entity_id: params.entity_id,
+    metadata: metadataJson,
+    created_at: now,
+  };
+}
+
+export async function listAuditHistory(
+  db: DatabaseAdapter,
+  params: {
+    session_id?: string;
+    action?: AuditAction;
+    entity_type?: AuditEntityType;
+    entity_id?: string;
+    from_date?: string;
+    to_date?: string;
+    limit?: number;
+  } = {}
+): Promise<AuditHistoryWithSession[]> {
+  let query = `
+    SELECT h.*, s.name as session_name
+    FROM audit_history h
+    LEFT JOIN sessions s ON h.session_id = s.id
+    WHERE 1=1
+  `;
+  const bindings: (string | number)[] = [];
+
+  if (params.session_id) {
+    query += ' AND h.session_id = ?';
+    bindings.push(params.session_id);
+  }
+
+  if (params.action) {
+    query += ' AND h.action = ?';
+    bindings.push(params.action);
+  }
+
+  if (params.entity_type) {
+    query += ' AND h.entity_type = ?';
+    bindings.push(params.entity_type);
+  }
+
+  if (params.entity_id) {
+    query += ' AND h.entity_id = ?';
+    bindings.push(params.entity_id);
+  }
+
+  if (params.from_date) {
+    query += ' AND h.created_at >= ?';
+    bindings.push(params.from_date);
+  }
+
+  if (params.to_date) {
+    query += ' AND h.created_at <= ?';
+    bindings.push(params.to_date);
+  }
+
+  query += ' ORDER BY h.created_at DESC LIMIT ?';
+  bindings.push(params.limit ?? 50);
+
+  const result = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<AuditHistoryWithSession>();
+
+  return result.results;
+}
+
+export async function cleanupOldAuditHistory(
+  db: DatabaseAdapter,
+  retentionDays: number = 7
+): Promise<number> {
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const result = await db
+    .prepare('DELETE FROM audit_history WHERE created_at < ?')
+    .bind(cutoff)
+    .run();
+
+  return result.meta.changes;
+}
+
+// ============ Claim Queue Queries ============
+
+import type { QueueEntry, QueueEntryWithDetails } from './types';
+import { SCOPE_WAIT_MINUTES } from './types';
+
+export async function getNextQueuePosition(
+  db: DatabaseAdapter,
+  claimId: string
+): Promise<number> {
+  const result = await db
+    .prepare('SELECT MAX(position) as max_pos FROM claim_queue WHERE claim_id = ?')
+    .bind(claimId)
+    .first<{ max_pos: number | null }>();
+
+  return (result?.max_pos ?? 0) + 1;
+}
+
+export async function calculateEstimatedWait(
+  db: DatabaseAdapter,
+  claimId: string,
+  position: number
+): Promise<number> {
+  // Get all entries before this position, sum their scope times
+  const result = await db
+    .prepare(
+      `SELECT scope FROM claim_queue
+       WHERE claim_id = ? AND position < ?
+       ORDER BY priority DESC, position ASC`
+    )
+    .bind(claimId, position)
+    .all<{ scope: ClaimScope }>();
+
+  let totalMinutes = 0;
+  for (const entry of result.results) {
+    totalMinutes += SCOPE_WAIT_MINUTES[entry.scope] ?? SCOPE_WAIT_MINUTES.medium;
+  }
+
+  // Also add the current claim's remaining time (estimate as half its scope)
+  const claim = await getClaim(db, claimId);
+  if (claim) {
+    totalMinutes += Math.round(SCOPE_WAIT_MINUTES[claim.scope] / 2);
+  }
+
+  return totalMinutes;
+}
+
+export async function joinQueue(
+  db: DatabaseAdapter,
+  params: {
+    claim_id: string;
+    session_id: string;
+    intent: string;
+    priority?: number;
+    scope?: ClaimScope;
+  }
+): Promise<QueueEntry> {
+  const id = generateId();
+  const now = new Date().toISOString();
+  const priority = params.priority ?? 50;
+  const scope = params.scope ?? 'medium';
+
+  // Get next position for this claim's queue
+  const position = await getNextQueuePosition(db, params.claim_id);
+
+  // Calculate estimated wait time
+  const estimatedWait = await calculateEstimatedWait(db, params.claim_id, position);
+
+  await db
+    .prepare(
+      `INSERT INTO claim_queue (id, claim_id, session_id, intent, position, priority, scope, estimated_wait_minutes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(id, params.claim_id, params.session_id, params.intent, position, priority, scope, estimatedWait, now)
+    .run();
+
+  return {
+    id,
+    claim_id: params.claim_id,
+    session_id: params.session_id,
+    intent: params.intent,
+    position,
+    priority,
+    scope,
+    estimated_wait_minutes: estimatedWait,
+    created_at: now,
+  };
+}
+
+export async function leaveQueue(
+  db: DatabaseAdapter,
+  queueId: string
+): Promise<boolean> {
+  const result = await db
+    .prepare('DELETE FROM claim_queue WHERE id = ?')
+    .bind(queueId)
+    .run();
+
+  return result.meta.changes > 0;
+}
+
+export async function getQueueEntry(
+  db: DatabaseAdapter,
+  queueId: string
+): Promise<QueueEntry | null> {
+  const result = await db
+    .prepare('SELECT * FROM claim_queue WHERE id = ?')
+    .bind(queueId)
+    .first<QueueEntry>();
+
+  return result ?? null;
+}
+
+export async function listQueue(
+  db: DatabaseAdapter,
+  params: {
+    claim_id?: string;
+    session_id?: string;
+  } = {}
+): Promise<QueueEntryWithDetails[]> {
+  let query = `
+    SELECT
+      q.*,
+      s.name as session_name,
+      c.intent as claim_intent,
+      cs.name as claim_session_name,
+      GROUP_CONCAT(cf.file_path, '|||') as claim_files_concat
+    FROM claim_queue q
+    JOIN sessions s ON q.session_id = s.id
+    JOIN claims c ON q.claim_id = c.id
+    JOIN sessions cs ON c.session_id = cs.id
+    LEFT JOIN claim_files cf ON c.id = cf.claim_id
+    WHERE 1=1
+  `;
+  const bindings: string[] = [];
+
+  if (params.claim_id) {
+    query += ' AND q.claim_id = ?';
+    bindings.push(params.claim_id);
+  }
+
+  if (params.session_id) {
+    query += ' AND q.session_id = ?';
+    bindings.push(params.session_id);
+  }
+
+  query += ' GROUP BY q.id ORDER BY q.priority DESC, q.position ASC';
+
+  const result = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<QueueEntry & {
+      session_name: string | null;
+      claim_intent: string;
+      claim_session_name: string | null;
+      claim_files_concat: string | null;
+    }>();
+
+  return result.results.map((r) => ({
+    ...r,
+    claim_files: r.claim_files_concat ? r.claim_files_concat.split('|||') : [],
+  }));
+}
+
+export async function removeSessionFromAllQueues(
+  db: DatabaseAdapter,
+  sessionId: string
+): Promise<number> {
+  const result = await db
+    .prepare('DELETE FROM claim_queue WHERE session_id = ?')
+    .bind(sessionId)
+    .run();
+
+  return result.meta.changes;
+}
+
+export async function getQueuedSessionsForClaim(
+  db: DatabaseAdapter,
+  claimId: string
+): Promise<Array<{ session_id: string; session_name: string | null; position: number }>> {
+  const result = await db
+    .prepare(
+      `SELECT q.session_id, s.name as session_name, q.position
+       FROM claim_queue q
+       JOIN sessions s ON q.session_id = s.id
+       WHERE q.claim_id = ?
+       ORDER BY q.priority DESC, q.position ASC`
+    )
+    .bind(claimId)
+    .all<{ session_id: string; session_name: string | null; position: number }>();
+
+  return result.results;
+}
+
+// ============ Notification Queries ============
+
+import type { Notification, NotificationType, NotificationMetadata } from './types';
+
+export async function createNotification(
+  db: DatabaseAdapter,
+  params: {
+    session_id: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+    reference_type?: string;
+    reference_id?: string;
+    metadata?: NotificationMetadata;
+  }
+): Promise<Notification> {
+  const id = generateId();
+  const now = new Date().toISOString();
+  const metadataJson = params.metadata ? JSON.stringify(params.metadata) : null;
+
+  await db
+    .prepare(
+      `INSERT INTO notifications (id, session_id, type, title, message, reference_type, reference_id, metadata, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      id,
+      params.session_id,
+      params.type,
+      params.title,
+      params.message,
+      params.reference_type ?? null,
+      params.reference_id ?? null,
+      metadataJson,
+      now
+    )
+    .run();
+
+  return {
+    id,
+    session_id: params.session_id,
+    type: params.type,
+    title: params.title,
+    message: params.message,
+    reference_type: params.reference_type ?? null,
+    reference_id: params.reference_id ?? null,
+    metadata: metadataJson,
+    read_at: null,
+    created_at: now,
+  };
+}
+
+export async function listNotifications(
+  db: DatabaseAdapter,
+  params: {
+    session_id: string;
+    unread_only?: boolean;
+    type?: NotificationType;
+    limit?: number;
+  }
+): Promise<Notification[]> {
+  let query = 'SELECT * FROM notifications WHERE session_id = ?';
+  const bindings: (string | number)[] = [params.session_id];
+
+  if (params.unread_only) {
+    query += ' AND read_at IS NULL';
+  }
+
+  if (params.type) {
+    query += ' AND type = ?';
+    bindings.push(params.type);
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ?';
+  bindings.push(params.limit ?? 50);
+
+  const result = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<Notification>();
+
+  return result.results;
+}
+
+export async function markNotificationsRead(
+  db: DatabaseAdapter,
+  notificationIds: string[]
+): Promise<number> {
+  if (notificationIds.length === 0) return 0;
+
+  const now = new Date().toISOString();
+  const placeholders = notificationIds.map(() => '?').join(',');
+
+  const result = await db
+    .prepare(`UPDATE notifications SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`)
+    .bind(now, ...notificationIds)
+    .run();
+
+  return result.meta.changes;
+}
+
+export async function getNotification(
+  db: DatabaseAdapter,
+  id: string
+): Promise<Notification | null> {
+  const result = await db
+    .prepare('SELECT * FROM notifications WHERE id = ?')
+    .bind(id)
+    .first<Notification>();
+
+  return result ?? null;
+}
+
+// Helper to notify all sessions in a claim's queue when the claim is released
+export async function notifyQueueOnClaimRelease(
+  db: DatabaseAdapter,
+  claimId: string,
+  releasedBy: string,
+  files: string[]
+): Promise<number> {
+  const queuedSessions = await getQueuedSessionsForClaim(db, claimId);
+
+  if (queuedSessions.length === 0) return 0;
+
+  let notified = 0;
+  for (let i = 0; i < queuedSessions.length; i++) {
+    const entry = queuedSessions[i];
+    const isFirst = i === 0;
+
+    await createNotification(db, {
+      session_id: entry.session_id,
+      type: isFirst ? 'queue_ready' : 'claim_released',
+      title: isFirst ? 'You are next in queue!' : 'Claim released',
+      message: isFirst
+        ? `The claim for ${files.join(', ')} has been released. You can now claim these files.`
+        : `A claim you were waiting for has been released. Position: ${i + 1}`,
+      reference_type: 'claim',
+      reference_id: claimId,
+      metadata: {
+        claim_id: claimId,
+        files,
+        released_by: releasedBy,
+        queue_position: i + 1,
+      },
+    });
+    notified++;
+  }
+
+  return notified;
 }

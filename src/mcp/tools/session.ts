@@ -12,6 +12,8 @@ import {
   endSession,
   cleanupStaleSessions,
   listClaims,
+  logAuditEvent,
+  removeSessionFromAllQueues,
 } from '../../db/queries.js';
 import type { TodoItem, SessionConfig } from '../../db/types.js';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
@@ -209,6 +211,15 @@ export async function handleSessionTool(
         user_id: userId,
       });
 
+      // Log audit event
+      await logAuditEvent(db, {
+        session_id: session.id,
+        action: 'session_started',
+        entity_type: 'session',
+        entity_id: session.id,
+        metadata: { project_root: input.project_root },
+      });
+
       const activeSessions = await listSessions(db, { project_root: input.project_root, user_id: userId });
 
       return createToolResult(
@@ -241,11 +252,24 @@ export async function handleSessionTool(
         return sessionResult.error;
       }
 
+      // Remove from all queues first
+      const removedFromQueues = await removeSessionFromAllQueues(db, input.session_id);
+
       await endSession(db, input.session_id, input.release_claims);
+
+      // Log audit event
+      const claimStatus = input.release_claims === 'complete' ? 'completed' : 'abandoned';
+      await logAuditEvent(db, {
+        session_id: input.session_id,
+        action: 'session_ended',
+        entity_type: 'session',
+        entity_id: input.session_id,
+        metadata: { status: claimStatus },
+      });
 
       return successResponse({
         success: true,
-        message: `Session ended. All claims marked as ${input.release_claims === 'complete' ? 'completed' : 'abandoned'}.`,
+        message: `Session ended. All claims marked as ${input.release_claims === 'complete' ? 'completed' : 'abandoned'}.${removedFromQueues > 0 ? ` Removed from ${removedFromQueues} queue(s).` : ''}`,
       });
     }
 

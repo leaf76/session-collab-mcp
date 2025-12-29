@@ -6,6 +6,75 @@ export type ClaimScope = 'small' | 'medium' | 'large';
 export type DecisionCategory = 'architecture' | 'naming' | 'api' | 'database' | 'ui' | 'other';
 export type UserStatus = 'active' | 'suspended' | 'deleted';
 
+// Audit history types
+export type AuditAction =
+  | 'session_started'
+  | 'session_ended'
+  | 'claim_created'
+  | 'claim_released'
+  | 'conflict_detected'
+  | 'queue_joined'
+  | 'queue_left'
+  | 'priority_changed';
+
+export type AuditEntityType = 'session' | 'claim' | 'queue';
+
+export interface AuditHistoryEntry {
+  id: string;
+  session_id: string | null;
+  action: AuditAction;
+  entity_type: AuditEntityType;
+  entity_id: string;
+  metadata: string | null; // JSON string
+  created_at: string;
+}
+
+export interface AuditHistoryWithSession extends AuditHistoryEntry {
+  session_name: string | null;
+}
+
+export interface AuditMetadata {
+  // Claim actions
+  files?: string[];
+  intent?: string;
+  scope?: ClaimScope;
+  priority?: number;
+  status?: ClaimStatus;
+
+  // Conflict actions
+  conflicting_session_id?: string;
+  conflicting_session_name?: string;
+
+  // Queue actions
+  position?: number;
+  claim_id?: string;
+
+  // Session actions
+  project_root?: string;
+
+  // Generic
+  reason?: string;
+  old_value?: unknown;
+  new_value?: unknown;
+}
+
+// Priority levels for claims
+export type PriorityLevel = 'critical' | 'high' | 'normal' | 'low';
+
+export interface PriorityInfo {
+  value: number;
+  level: PriorityLevel;
+  label: string;
+}
+
+// Helper function to get priority level from numeric value
+export function getPriorityLevel(priority: number): PriorityInfo {
+  if (priority >= 90) return { value: priority, level: 'critical', label: 'Critical (90-100)' };
+  if (priority >= 70) return { value: priority, level: 'high', label: 'High (70-89)' };
+  if (priority >= 40) return { value: priority, level: 'normal', label: 'Normal (40-69)' };
+  return { value: priority, level: 'low', label: 'Low (0-39)' };
+}
+
 // User and authentication types
 export interface User {
   id: string;
@@ -108,6 +177,7 @@ export interface Claim {
   intent: string;
   scope: ClaimScope;
   status: ClaimStatus;
+  priority: number;
   created_at: string;
   updated_at: string;
   completed_summary: string | null;
@@ -205,4 +275,68 @@ export interface ConflictInfo {
   symbol_name?: string;
   symbol_type?: SymbolType;
   conflict_level: 'file' | 'symbol';
+}
+
+// ============ Claim Queue Types ============
+
+export interface QueueEntry {
+  id: string;
+  claim_id: string;
+  session_id: string;
+  intent: string;
+  position: number;
+  priority: number;
+  scope: ClaimScope;
+  estimated_wait_minutes: number | null;
+  created_at: string;
+}
+
+export interface QueueEntryWithDetails extends QueueEntry {
+  session_name: string | null;
+  claim_files: string[];
+  claim_session_name: string | null;
+  claim_intent: string;
+}
+
+// Scope to estimated minutes mapping
+export const SCOPE_WAIT_MINUTES: Record<ClaimScope, number> = {
+  small: 30,
+  medium: 120, // 2 hours
+  large: 480, // 8 hours
+};
+
+// ============ Notification Types ============
+
+export type NotificationType = 'claim_released' | 'queue_ready' | 'conflict_detected' | 'session_message';
+
+export interface Notification {
+  id: string;
+  session_id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  reference_type: string | null;
+  reference_id: string | null;
+  metadata: string | null; // JSON string
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface NotificationMetadata {
+  // claim_released
+  claim_id?: string;
+  files?: string[];
+  released_by?: string;
+
+  // queue_ready
+  queue_position?: number;
+
+  // conflict_detected
+  conflicting_session_id?: string;
+  conflicting_session_name?: string;
+
+  // session_message
+  from_session_id?: string;
+  from_session_name?: string;
+  is_broadcast?: boolean;
 }

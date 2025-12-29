@@ -70,6 +70,7 @@ const SCHEMA_STATEMENTS = [
     session_id TEXT NOT NULL,
     intent TEXT NOT NULL,
     scope TEXT DEFAULT 'medium' CHECK (scope IN ('small', 'medium', 'large')),
+    priority INTEGER DEFAULT 50 CHECK (priority >= 0 AND priority <= 100),
     status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed', 'abandoned')),
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
@@ -78,6 +79,7 @@ const SCHEMA_STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_claims_session ON claims(session_id)`,
   `CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_claims_priority ON claims(priority)`,
 
   // Claim files
   `CREATE TABLE IF NOT EXISTS claim_files (
@@ -149,6 +151,63 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_symbol_refs_ref_file ON symbol_references(ref_file)`,
   `CREATE INDEX IF NOT EXISTS idx_symbol_refs_session ON symbol_references(session_id)`,
 
+  // Audit history table
+  `CREATE TABLE IF NOT EXISTS audit_history (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    action TEXT NOT NULL CHECK (action IN (
+      'session_started', 'session_ended',
+      'claim_created', 'claim_released', 'conflict_detected',
+      'queue_joined', 'queue_left', 'priority_changed'
+    )),
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('session', 'claim', 'queue')),
+    entity_id TEXT NOT NULL,
+    metadata TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_history_session ON audit_history(session_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_history_action ON audit_history(action)`,
+  `CREATE INDEX IF NOT EXISTS idx_history_created ON audit_history(created_at)`,
+
+  // Claim queue table
+  `CREATE TABLE IF NOT EXISTS claim_queue (
+    id TEXT PRIMARY KEY,
+    claim_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    intent TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    priority INTEGER DEFAULT 50 CHECK (priority >= 0 AND priority <= 100),
+    scope TEXT DEFAULT 'medium' CHECK (scope IN ('small', 'medium', 'large')),
+    estimated_wait_minutes INTEGER,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+    UNIQUE(claim_id, session_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_queue_claim ON claim_queue(claim_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_queue_session ON claim_queue(session_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_queue_priority ON claim_queue(priority DESC, position ASC)`,
+
+  // Notifications table
+  `CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    type TEXT NOT NULL CHECK (type IN (
+      'claim_released', 'queue_ready', 'conflict_detected', 'session_message'
+    )),
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    reference_type TEXT,
+    reference_id TEXT,
+    metadata TEXT,
+    read_at TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_notifications_session ON notifications(session_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(session_id, read_at)`,
+
   // Composite indexes for common query patterns
   `CREATE INDEX IF NOT EXISTS idx_sessions_status_heartbeat ON sessions(status, last_heartbeat)`,
   `CREATE INDEX IF NOT EXISTS idx_claims_status_session ON claims(status, session_id)`,
@@ -156,6 +215,9 @@ const SCHEMA_STATEMENTS = [
 ];
 
 const CLEANUP_STATEMENTS = [
+  'DELETE FROM notifications',
+  'DELETE FROM claim_queue',
+  'DELETE FROM audit_history',
   'DELETE FROM symbol_references',
   'DELETE FROM claim_symbols',
   'DELETE FROM claim_files',

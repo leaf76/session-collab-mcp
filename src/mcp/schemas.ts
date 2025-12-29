@@ -65,6 +65,9 @@ export const configSchema = z.object({
   stale_threshold_hours: z.number().min(0).optional(),
 });
 
+// Priority schema (0-100, default 50)
+export const prioritySchema = z.number().min(0).max(100).default(50);
+
 // Claim tools input schemas
 export const claimCreateSchema = z.object({
   session_id: sessionIdSchema,
@@ -72,10 +75,18 @@ export const claimCreateSchema = z.object({
   symbols: symbolClaimsArraySchema.optional(),
   intent: z.string().min(1, 'intent is required'),
   scope: claimScopeSchema.optional(),
+  priority: z.number().min(0).max(100).optional(),
 }).refine(
   (data) => (data.files && data.files.length > 0) || (data.symbols && data.symbols.length > 0),
   { message: 'Either files or symbols must be provided' }
 );
+
+export const claimUpdatePrioritySchema = z.object({
+  session_id: sessionIdSchema,
+  claim_id: claimIdSchema,
+  priority: z.number().min(0).max(100),
+  reason: z.string().optional(),
+});
 
 export const claimCheckSchema = z.object({
   files: filesArraySchema,
@@ -184,6 +195,53 @@ export const impactAnalysisSchema = z.object({
   session_id: sessionIdSchema,
   file: z.string().min(1),
   symbol: z.string().min(1),
+});
+
+// Audit history schemas
+export const historyListSchema = z.object({
+  session_id: z.string().optional(),
+  action: z.enum([
+    'session_started', 'session_ended',
+    'claim_created', 'claim_released', 'conflict_detected',
+    'queue_joined', 'queue_left', 'priority_changed'
+  ]).optional(),
+  entity_type: z.enum(['session', 'claim', 'queue']).optional(),
+  entity_id: z.string().optional(),
+  from_date: z.string().optional(),
+  to_date: z.string().optional(),
+  limit: z.number().min(1).max(500).optional(),
+});
+
+// Claim queue schemas
+export const queueJoinSchema = z.object({
+  session_id: sessionIdSchema,
+  claim_id: claimIdSchema,
+  intent: z.string().min(1, 'intent is required'),
+  priority: z.number().min(0).max(100).optional(),
+  scope: claimScopeSchema.optional(),
+});
+
+export const queueLeaveSchema = z.object({
+  session_id: sessionIdSchema,
+  queue_id: z.string().min(1, 'queue_id is required'),
+});
+
+export const queueListSchema = z.object({
+  claim_id: z.string().optional(),
+  session_id: z.string().optional(),
+});
+
+// Notification schemas
+export const notificationListSchema = z.object({
+  session_id: sessionIdSchema,
+  unread_only: z.boolean().optional(),
+  type: z.enum(['claim_released', 'queue_ready', 'conflict_detected', 'session_message']).optional(),
+  limit: z.number().min(1).max(100).optional(),
+});
+
+export const notificationMarkReadSchema = z.object({
+  session_id: sessionIdSchema,
+  notification_ids: z.array(z.string().min(1)).min(1, 'At least one notification_id is required'),
 });
 
 // Helper function to validate and return parsed data or error result
