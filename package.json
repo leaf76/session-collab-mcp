@@ -1,0 +1,25 @@
+{
+  "name": "session-collab-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Claude Code session collaboration - prevents conflicts between parallel sessions",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 execute session-collab-db --local --file=./migrations/0001_init.sql",
+    "db:migrate:remote": "wrangler d1 execute session-collab-db --remote --file=./migrations/0001_init.sql",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.99.0",
+    "vitest": "^2.1.8",
+    "eslint": "^9.17.0"
+  }
+}

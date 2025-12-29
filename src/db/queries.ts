@@ -1,0 +1,460 @@
+// Database queries for Session Collaboration MCP
+
+import type { D1Database } from '@cloudflare/workers-types';
+import type {
+  Session,
+  Claim,
+  ClaimStatus,
+  ClaimScope,
+  ClaimWithFiles,
+  ConflictInfo,
+  Message,
+  Decision,
+  DecisionCategory,
+} from './types';
+
+// Helper to generate UUID v4
+function generateId(): string {
+  return crypto.randomUUID();
+}
+
+// ============ Session Queries ============
+
+export async function createSession(
+  db: D1Database,
+  params: {
+    name?: string;
+    project_root: string;
+    machine_id?: string;
+  }
+): Promise<Session> {
+  const id = generateId();
+  const now = new Date().toISOString();
+
+  await db
+    .prepare(
+      `INSERT INTO sessions (id, name, project_root, machine_id, created_at, last_heartbeat, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'active')`
+    )
+    .bind(id, params.name ?? null, params.project_root, params.machine_id ?? null, now, now)
+    .run();
+
+  return {
+    id,
+    name: params.name ?? null,
+    project_root: params.project_root,
+    machine_id: params.machine_id ?? null,
+    created_at: now,
+    last_heartbeat: now,
+    status: 'active',
+  };
+}
+
+export async function getSession(db: D1Database, id: string): Promise<Session | null> {
+  const result = await db.prepare('SELECT * FROM sessions WHERE id = ?').bind(id).first<Session>();
+  return result ?? null;
+}
+
+export async function listSessions(
+  db: D1Database,
+  params: {
+    include_inactive?: boolean;
+    project_root?: string;
+  } = {}
+): Promise<Session[]> {
+  let query = 'SELECT * FROM sessions WHERE 1=1';
+  const bindings: (string | number)[] = [];
+
+  if (!params.include_inactive) {
+    query += " AND status = 'active'";
+  }
+
+  if (params.project_root) {
+    query += ' AND project_root = ?';
+    bindings.push(params.project_root);
+  }
+
+  query += ' ORDER BY last_heartbeat DESC';
+
+  const result = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<Session>();
+  return result.results;
+}
+
+export async function updateSessionHeartbeat(db: D1Database, id: string): Promise<boolean> {
+  const now = new Date().toISOString();
+  const result = await db
+    .prepare("UPDATE sessions SET last_heartbeat = ? WHERE id = ? AND status = 'active'")
+    .bind(now, id)
+    .run();
+  return result.meta.changes > 0;
+}
+
+export async function endSession(
+  db: D1Database,
+  id: string,
+  release_claims: 'complete' | 'abandon' = 'abandon'
+): Promise<boolean> {
+  const claimStatus: ClaimStatus = release_claims === 'complete' ? 'completed' : 'abandoned';
+
+  // Update all active claims for this session
+  await db
+    .prepare("UPDATE claims SET status = ?, updated_at = ? WHERE session_id = ? AND status = 'active'")
+    .bind(claimStatus, new Date().toISOString(), id)
+    .run();
+
+  // Mark session as terminated
+  const result = await db.prepare("UPDATE sessions SET status = 'terminated' WHERE id = ?").bind(id).run();
+
+  return result.meta.changes > 0;
+}
+
+export async function cleanupStaleSessions(db: D1Database, staleMinutes: number = 30): Promise<number> {
+  const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
+
+  // Mark stale sessions as inactive
+  const result = await db
+    .prepare("UPDATE sessions SET status = 'inactive' WHERE status = 'active' AND last_heartbeat < ?")
+    .bind(cutoff)
+    .run();
+
+  // Abandon their claims
+  if (result.meta.changes > 0) {
+    await db
+      .prepare(
+        `UPDATE claims SET status = 'abandoned', updated_at = ?
+         WHERE status = 'active' AND session_id IN (
+           SELECT id FROM sessions WHERE status = 'inactive'
+         )`
+      )
+      .bind(new Date().toISOString())
+      .run();
+  }
+
+  return result.meta.changes;
+}
+
+// ============ Claim Queries ============
+
+export async function createClaim(
+  db: D1Database,
+  params: {
+    session_id: string;
+    files: string[];
+    intent: string;
+    scope?: ClaimScope;
+  }
+): Promise<{ claim: Claim; files: string[] }> {
+  const id = generateId();
+  const now = new Date().toISOString();
+  const scope = params.scope ?? 'medium';
+
+  // Batch insert: claim + all file paths in single transaction
+  const claimStatement = db
+    .prepare(
+      `INSERT INTO claims (id, session_id, intent, scope, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'active', ?, ?)`
+    )
+    .bind(id, params.session_id, params.intent, scope, now, now);
+
+  const fileStatements = params.files.map((filePath) => {
+    const isPattern = filePath.includes('*') ? 1 : 0;
+    return db
+      .prepare('INSERT INTO claim_files (claim_id, file_path, is_pattern) VALUES (?, ?, ?)')
+      .bind(id, filePath, isPattern);
+  });
+
+  await db.batch([claimStatement, ...fileStatements]);
+
+  return {
+    claim: {
+      id,
+      session_id: params.session_id,
+      intent: params.intent,
+      scope,
+      status: 'active',
+      created_at: now,
+      updated_at: now,
+      completed_summary: null,
+    },
+    files: params.files,
+  };
+}
+
+export async function getClaim(db: D1Database, id: string): Promise<ClaimWithFiles | null> {
+  const claim = await db.prepare('SELECT * FROM claims WHERE id = ?').bind(id).first<Claim>();
+
+  if (!claim) return null;
+
+  const files = await db.prepare('SELECT file_path FROM claim_files WHERE claim_id = ?').bind(id).all<{ file_path: string }>();
+
+  const session = await db.prepare('SELECT name FROM sessions WHERE id = ?').bind(claim.session_id).first<{ name: string | null }>();
+
+  return {
+    ...claim,
+    files: files.results.map((f) => f.file_path),
+    session_name: session?.name ?? null,
+  };
+}
+
+export async function listClaims(
+  db: D1Database,
+  params: {
+    session_id?: string;
+    status?: ClaimStatus | 'all';
+    project_root?: string;
+  } = {}
+): Promise<ClaimWithFiles[]> {
+  let query = `
+    SELECT c.*, s.name as session_name
+    FROM claims c
+    JOIN sessions s ON c.session_id = s.id
+    WHERE 1=1
+  `;
+  const bindings: string[] = [];
+
+  if (params.session_id) {
+    query += ' AND c.session_id = ?';
+    bindings.push(params.session_id);
+  }
+
+  if (params.status && params.status !== 'all') {
+    query += ' AND c.status = ?';
+    bindings.push(params.status);
+  }
+
+  if (params.project_root) {
+    query += ' AND s.project_root = ?';
+    bindings.push(params.project_root);
+  }
+
+  query += ' ORDER BY c.created_at DESC';
+
+  const claims = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<Claim & { session_name: string | null }>();
+
+  if (claims.results.length === 0) {
+    return [];
+  }
+
+  // Batch fetch all files for claims (avoid N+1 query)
+  const claimIds = claims.results.map((c) => c.id);
+  const placeholders = claimIds.map(() => '?').join(',');
+  const allFiles = await db
+    .prepare(`SELECT claim_id, file_path FROM claim_files WHERE claim_id IN (${placeholders})`)
+    .bind(...claimIds)
+    .all<{ claim_id: string; file_path: string }>();
+
+  // Group files by claim_id
+  const filesByClaimId = new Map<string, string[]>();
+  for (const f of allFiles.results) {
+    const arr = filesByClaimId.get(f.claim_id) ?? [];
+    arr.push(f.file_path);
+    filesByClaimId.set(f.claim_id, arr);
+  }
+
+  // Assemble results
+  return claims.results.map((claim) => ({
+    ...claim,
+    files: filesByClaimId.get(claim.id) ?? [],
+  }));
+}
+
+export async function checkConflicts(
+  db: D1Database,
+  files: string[],
+  excludeSessionId?: string
+): Promise<ConflictInfo[]> {
+  const conflicts: ConflictInfo[] = [];
+
+  for (const filePath of files) {
+    // Check for exact matches or pattern overlaps
+    let query = `
+      SELECT
+        c.id as claim_id,
+        c.session_id,
+        s.name as session_name,
+        cf.file_path,
+        c.intent,
+        c.scope,
+        c.created_at
+      FROM claim_files cf
+      JOIN claims c ON cf.claim_id = c.id
+      JOIN sessions s ON c.session_id = s.id
+      WHERE c.status = 'active'
+        AND s.status = 'active'
+        AND (cf.file_path = ? OR (cf.is_pattern = 1 AND ? GLOB cf.file_path))
+    `;
+    const bindings: string[] = [filePath, filePath];
+
+    if (excludeSessionId) {
+      query += ' AND c.session_id != ?';
+      bindings.push(excludeSessionId);
+    }
+
+    const result = await db
+      .prepare(query)
+      .bind(...bindings)
+      .all<ConflictInfo>();
+
+    conflicts.push(...result.results);
+  }
+
+  // Deduplicate by claim_id + file_path
+  const seen = new Set<string>();
+  return conflicts.filter((c) => {
+    const key = `${c.claim_id}:${c.file_path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export async function releaseClaim(
+  db: D1Database,
+  id: string,
+  params: {
+    status: 'completed' | 'abandoned';
+    summary?: string;
+  }
+): Promise<boolean> {
+  const now = new Date().toISOString();
+
+  const result = await db
+    .prepare('UPDATE claims SET status = ?, updated_at = ?, completed_summary = ? WHERE id = ?')
+    .bind(params.status, now, params.summary ?? null, id)
+    .run();
+
+  return result.meta.changes > 0;
+}
+
+// ============ Message Queries ============
+
+export async function sendMessage(
+  db: D1Database,
+  params: {
+    from_session_id: string;
+    to_session_id?: string;
+    content: string;
+  }
+): Promise<Message> {
+  const id = generateId();
+  const now = new Date().toISOString();
+
+  await db
+    .prepare(
+      `INSERT INTO messages (id, from_session_id, to_session_id, content, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .bind(id, params.from_session_id, params.to_session_id ?? null, params.content, now)
+    .run();
+
+  return {
+    id,
+    from_session_id: params.from_session_id,
+    to_session_id: params.to_session_id ?? null,
+    content: params.content,
+    read_at: null,
+    created_at: now,
+  };
+}
+
+export async function listMessages(
+  db: D1Database,
+  params: {
+    session_id: string;
+    unread_only?: boolean;
+    mark_as_read?: boolean;
+  }
+): Promise<Message[]> {
+  let query = `
+    SELECT * FROM messages
+    WHERE (to_session_id = ? OR to_session_id IS NULL)
+  `;
+  const bindings: string[] = [params.session_id];
+
+  if (params.unread_only) {
+    query += ' AND read_at IS NULL';
+  }
+
+  query += ' ORDER BY created_at DESC';
+
+  const messages = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<Message>();
+
+  // Mark as read if requested
+  if (params.mark_as_read && messages.results.length > 0) {
+    const now = new Date().toISOString();
+    const ids = messages.results.map((m) => m.id);
+
+    for (const id of ids) {
+      await db.prepare('UPDATE messages SET read_at = ? WHERE id = ? AND read_at IS NULL').bind(now, id).run();
+    }
+  }
+
+  return messages.results;
+}
+
+// ============ Decision Queries ============
+
+export async function addDecision(
+  db: D1Database,
+  params: {
+    session_id: string;
+    category?: DecisionCategory;
+    title: string;
+    description: string;
+  }
+): Promise<Decision> {
+  const id = generateId();
+  const now = new Date().toISOString();
+
+  await db
+    .prepare(
+      `INSERT INTO decisions (id, session_id, category, title, description, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .bind(id, params.session_id, params.category ?? null, params.title, params.description, now)
+    .run();
+
+  return {
+    id,
+    session_id: params.session_id,
+    category: params.category ?? null,
+    title: params.title,
+    description: params.description,
+    created_at: now,
+  };
+}
+
+export async function listDecisions(
+  db: D1Database,
+  params: {
+    category?: DecisionCategory;
+    limit?: number;
+  } = {}
+): Promise<Decision[]> {
+  let query = 'SELECT * FROM decisions WHERE 1=1';
+  const bindings: (string | number)[] = [];
+
+  if (params.category) {
+    query += ' AND category = ?';
+    bindings.push(params.category);
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ?';
+  bindings.push(params.limit ?? 20);
+
+  const result = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<Decision>();
+
+  return result.results;
+}
