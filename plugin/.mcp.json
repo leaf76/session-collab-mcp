@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "session-collab": {
+      "command": "npx",
+      "args": ["-y", "session-collab-mcp@latest"]
+    }
+  }
+}

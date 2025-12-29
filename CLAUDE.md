@@ -2,7 +2,20 @@
 
 MCP server for Claude Code session collaboration - prevents conflicts when multiple sessions work on the same codebase.
 
-## Quick Start
+## Installation
+
+### Option 1: Claude Code Plugin (Recommended)
+
+```bash
+# Local testing
+claude --plugin-dir ./plugin
+
+# After publishing
+/plugin marketplace add YOUR_USERNAME/session-collab-plugin
+/plugin install session-collab@session-collab-plugins
+```
+
+### Option 2: MCP Server Only
 
 Add to `~/.claude.json`:
 
@@ -47,25 +60,41 @@ npm run test         # Run tests
 ## Project Structure
 
 ```
-src/
-├── cli.ts              # Entry point
-├── constants.ts        # Version info, server instructions
-├── db/                 # SQLite database layer
-│   ├── queries.ts      # SQL queries
-│   ├── sqlite-adapter.ts
-│   └── types.ts        # Database type definitions
-├── mcp/
-│   ├── protocol.ts     # JSON-RPC protocol
-│   ├── server.ts       # MCP server
-│   └── tools/          # Tool implementations
-│       ├── session.ts  # Session management
-│       ├── claim.ts    # File/symbol claims
-│       ├── message.ts  # Messaging
-│       ├── decision.ts # Decision logging
-│       └── lsp.ts      # LSP integration
-└── utils/
-    ├── crypto.ts       # Hash utilities
-    └── response.ts     # Shared response builders
+.
+├── src/                    # MCP Server source
+│   ├── cli.ts              # Entry point
+│   ├── constants.ts        # Version info, server instructions
+│   ├── db/                 # SQLite database layer
+│   │   ├── queries.ts      # SQL queries
+│   │   ├── sqlite-adapter.ts
+│   │   └── types.ts        # Database type definitions
+│   ├── mcp/
+│   │   ├── protocol.ts     # JSON-RPC protocol
+│   │   ├── server.ts       # MCP server
+│   │   └── tools/          # Tool implementations
+│   │       ├── session.ts  # Session management
+│   │       ├── claim.ts    # File/symbol claims
+│   │       ├── message.ts  # Messaging
+│   │       ├── decision.ts # Decision logging
+│   │       └── lsp.ts      # LSP integration
+│   └── utils/
+│       ├── crypto.ts       # Hash utilities
+│       └── response.ts     # Shared response builders
+├── plugin/                 # Claude Code Plugin
+│   ├── .claude-plugin/
+│   │   ├── plugin.json     # Plugin manifest
+│   │   └── marketplace.json# Marketplace config
+│   ├── .mcp.json           # MCP server config
+│   ├── hooks/
+│   │   └── hooks.json      # SessionStart & PreToolUse hooks
+│   ├── skills/
+│   │   └── collab-start/   # Session initialization skill
+│   │       └── SKILL.md
+│   ├── commands/
+│   │   ├── status.md       # /session-collab:status
+│   │   └── end.md          # /session-collab:end
+│   └── README.md
+└── migrations/             # SQLite migrations
 ```
 
 ## MCP Tools Reference

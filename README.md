@@ -26,7 +26,31 @@ Session Collab MCP provides a **Work-in-Progress (WIP) Registry** that allows se
 
 ## Installation
 
-### Zero-Config Setup
+### Option 1: Claude Code Plugin (Recommended)
+
+Install as a Claude Code plugin for automatic MCP server setup, hooks, and skills:
+
+```bash
+# Add the marketplace
+/plugin marketplace add YOUR_USERNAME/session-collab-plugin
+
+# Install the plugin
+/plugin install session-collab@session-collab-plugins
+```
+
+Or test locally:
+
+```bash
+claude --plugin-dir ./plugin
+```
+
+The plugin includes:
+- **MCP Server**: Automatically configured
+- **Hooks**: SessionStart and PreToolUse reminders
+- **Skills**: `collab-start` for full initialization
+- **Commands**: `/session-collab:status` and `/session-collab:end`
+
+### Option 2: MCP Server Only
 
 Add to your `~/.claude.json`:
 
@@ -41,9 +65,7 @@ Add to your `~/.claude.json`:
 }
 ```
 
-That's it! The MCP server includes built-in instructions that Claude follows automatically.
-
-### Manual Installation
+### Option 3: Global Installation
 
 ```bash
 npm install -g session-collab-mcp
@@ -216,12 +238,25 @@ session-collab-mcp/
 ├── bin/                    # Executable entry point
 ├── migrations/             # SQLite migration files
 │   ├── 0001_init.sql           # Core tables
-│   ├── 0002_auth.sql           # Auth tables
 │   ├── 0002_session_status.sql # Session status
 │   ├── 0003_config.sql         # Session config
 │   ├── 0004_symbols.sql        # Symbol-level claims
 │   ├── 0005_references.sql     # Reference tracking
 │   └── 0006_composite_indexes.sql # Query optimization
+├── plugin/                 # Claude Code Plugin
+│   ├── .claude-plugin/
+│   │   ├── plugin.json         # Plugin manifest
+│   │   └── marketplace.json    # Marketplace config
+│   ├── .mcp.json               # MCP server config
+│   ├── hooks/
+│   │   └── hooks.json          # Automated hooks
+│   ├── skills/
+│   │   └── collab-start/       # Session init skill
+│   │       └── SKILL.md
+│   ├── commands/
+│   │   ├── status.md           # /session-collab:status
+│   │   └── end.md              # /session-collab:end
+│   └── README.md
 ├── src/
 │   ├── cli.ts             # CLI entry point
 │   ├── constants.ts       # Version and server instructions

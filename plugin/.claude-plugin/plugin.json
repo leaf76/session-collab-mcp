@@ -1,0 +1,19 @@
+{
+  "name": "session-collab",
+  "version": "0.6.0",
+  "description": "Multi-session collaboration for Claude Code - prevents conflicts when multiple sessions work on the same codebase",
+  "author": {
+    "name": "cy76",
+    "email": "cy76@example.com"
+  },
+  "homepage": "https://github.com/anthropics/session-collab-mcp",
+  "repository": "https://github.com/anthropics/session-collab-mcp",
+  "license": "MIT",
+  "keywords": [
+    "collaboration",
+    "session",
+    "conflict-detection",
+    "multi-session",
+    "mcp"
+  ]
+}

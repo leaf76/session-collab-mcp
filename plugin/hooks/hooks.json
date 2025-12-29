@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"continue\": true, \"systemMessage\": \"Session Collaboration Plugin Active. REQUIRED: Call mcp__session-collab__collab_session_start with project_root and session name before doing anything else.\"}'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"decision\": \"allow\", \"systemMessage\": \"REMINDER: Before editing files, ensure you have called collab_check. Follow the workflow: collab_check -> collab_claim -> Edit -> collab_release\"}'"
+          }
+        ]
+      }
+    ]
+  }
+}
