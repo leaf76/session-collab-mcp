@@ -11,6 +11,8 @@ import type {
   Message,
   Decision,
   DecisionCategory,
+  TodoItem,
+  SessionProgress,
 } from './types';
 
 // Helper to generate UUID v4
@@ -26,6 +28,7 @@ export async function createSession(
     name?: string;
     project_root: string;
     machine_id?: string;
+    user_id?: string;
   }
 ): Promise<Session> {
   const id = generateId();
@@ -33,10 +36,10 @@ export async function createSession(
 
   await db
     .prepare(
-      `INSERT INTO sessions (id, name, project_root, machine_id, created_at, last_heartbeat, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'active')`
+      `INSERT INTO sessions (id, name, project_root, machine_id, user_id, created_at, last_heartbeat, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`
     )
-    .bind(id, params.name ?? null, params.project_root, params.machine_id ?? null, now, now)
+    .bind(id, params.name ?? null, params.project_root, params.machine_id ?? null, params.user_id ?? null, now, now)
     .run();
 
   return {
@@ -44,9 +47,13 @@ export async function createSession(
     name: params.name ?? null,
     project_root: params.project_root,
     machine_id: params.machine_id ?? null,
+    user_id: params.user_id ?? null,
     created_at: now,
     last_heartbeat: now,
     status: 'active',
+    current_task: null,
+    progress: null,
+    todos: null,
   };
 }
 
@@ -83,12 +90,99 @@ export async function listSessions(
   return result.results;
 }
 
-export async function updateSessionHeartbeat(db: D1Database, id: string): Promise<boolean> {
+export async function updateSessionHeartbeat(
+  db: D1Database,
+  id: string,
+  statusUpdate?: {
+    current_task?: string | null;
+    todos?: TodoItem[];
+  }
+): Promise<boolean> {
   const now = new Date().toISOString();
+
+  // Calculate progress from todos if provided
+  let progress: SessionProgress | null = null;
+  let todosJson: string | null = null;
+
+  if (statusUpdate?.todos) {
+    const total = statusUpdate.todos.length;
+    const completed = statusUpdate.todos.filter((t) => t.status === 'completed').length;
+    progress = {
+      completed,
+      total,
+      percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
+    };
+    todosJson = JSON.stringify(statusUpdate.todos);
+  }
+
+  let query = "UPDATE sessions SET last_heartbeat = ?";
+  const bindings: (string | null)[] = [now];
+
+  if (statusUpdate?.current_task !== undefined) {
+    query += ", current_task = ?";
+    bindings.push(statusUpdate.current_task);
+  }
+
+  if (progress) {
+    query += ", progress = ?";
+    bindings.push(JSON.stringify(progress));
+  }
+
+  if (todosJson) {
+    query += ", todos = ?";
+    bindings.push(todosJson);
+  }
+
+  query += " WHERE id = ? AND status = 'active'";
+  bindings.push(id);
+
   const result = await db
-    .prepare("UPDATE sessions SET last_heartbeat = ? WHERE id = ? AND status = 'active'")
-    .bind(now, id)
+    .prepare(query)
+    .bind(...bindings)
     .run();
+  return result.meta.changes > 0;
+}
+
+export async function updateSessionStatus(
+  db: D1Database,
+  id: string,
+  params: {
+    current_task?: string | null;
+    todos?: TodoItem[];
+  }
+): Promise<boolean> {
+  const now = new Date().toISOString();
+
+  // Calculate progress from todos
+  let progress: SessionProgress | null = null;
+  let todosJson: string | null = null;
+
+  if (params.todos) {
+    const total = params.todos.length;
+    const completed = params.todos.filter((t) => t.status === 'completed').length;
+    progress = {
+      completed,
+      total,
+      percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
+    };
+    todosJson = JSON.stringify(params.todos);
+  }
+
+  const result = await db
+    .prepare(
+      `UPDATE sessions
+       SET current_task = ?, progress = ?, todos = ?, last_heartbeat = ?
+       WHERE id = ? AND status = 'active'`
+    )
+    .bind(
+      params.current_task ?? null,
+      progress ? JSON.stringify(progress) : null,
+      todosJson,
+      now,
+      id
+    )
+    .run();
+
   return result.meta.changes > 0;
 }
 
@@ -111,8 +205,9 @@ export async function endSession(
   return result.meta.changes > 0;
 }
 
-export async function cleanupStaleSessions(db: D1Database, staleMinutes: number = 30): Promise<number> {
+export async function cleanupStaleSessions(db: D1Database, staleMinutes: number = 30): Promise<{ stale_sessions: number; orphaned_claims: number }> {
   const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
+  const now = new Date().toISOString();
 
   // Mark stale sessions as inactive
   const result = await db
@@ -120,20 +215,21 @@ export async function cleanupStaleSessions(db: D1Database, staleMinutes: number 
     .bind(cutoff)
     .run();
 
-  // Abandon their claims
-  if (result.meta.changes > 0) {
-    await db
-      .prepare(
-        `UPDATE claims SET status = 'abandoned', updated_at = ?
-         WHERE status = 'active' AND session_id IN (
-           SELECT id FROM sessions WHERE status = 'inactive'
-         )`
-      )
-      .bind(new Date().toISOString())
-      .run();
-  }
+  // Abandon claims from inactive/terminated sessions
+  const orphanedResult = await db
+    .prepare(
+      `UPDATE claims SET status = 'abandoned', updated_at = ?
+       WHERE status = 'active' AND session_id IN (
+         SELECT id FROM sessions WHERE status IN ('inactive', 'terminated')
+       )`
+    )
+    .bind(now)
+    .run();
 
-  return result.meta.changes;
+  return {
+    stale_sessions: result.meta.changes,
+    orphaned_claims: orphanedResult.meta.changes,
+  };
 }
 
 // ============ Claim Queries ============
