@@ -286,24 +286,6 @@ function handleHomepage(env: Env, request: Request): Response {
     </header>
 
     <div class="card">
-      <h2>MCP Tools</h2>
-      <div class="tools">
-        <div class="tool"><code>collab_session_start</code><span>Start a session</span></div>
-        <div class="tool"><code>collab_session_end</code><span>End a session</span></div>
-        <div class="tool"><code>collab_session_list</code><span>List sessions</span></div>
-        <div class="tool"><code>collab_session_heartbeat</code><span>Update heartbeat</span></div>
-        <div class="tool"><code>collab_claim</code><span>Claim files</span></div>
-        <div class="tool"><code>collab_check</code><span>Check conflicts</span></div>
-        <div class="tool"><code>collab_release</code><span>Release claim</span></div>
-        <div class="tool"><code>collab_claims_list</code><span>List all claims</span></div>
-        <div class="tool"><code>collab_message_send</code><span>Send message</span></div>
-        <div class="tool"><code>collab_message_list</code><span>Read messages</span></div>
-        <div class="tool"><code>collab_decision_add</code><span>Record decision</span></div>
-        <div class="tool"><code>collab_decision_list</code><span>List decisions</span></div>
-      </div>
-    </div>
-
-    <div class="card">
       <h2>Quick Start</h2>
 
       <div class="step">
@@ -343,6 +325,24 @@ function handleHomepage(env: Env, request: Request): Response {
 }</pre>
           <button class="copy-btn" onclick="copy('s3')">Copy</button>
         </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>MCP Tools</h2>
+      <div class="tools">
+        <div class="tool"><code>collab_session_start</code><span>Start a session</span></div>
+        <div class="tool"><code>collab_session_end</code><span>End a session</span></div>
+        <div class="tool"><code>collab_session_list</code><span>List sessions</span></div>
+        <div class="tool"><code>collab_session_heartbeat</code><span>Update heartbeat</span></div>
+        <div class="tool"><code>collab_claim</code><span>Claim files</span></div>
+        <div class="tool"><code>collab_check</code><span>Check conflicts</span></div>
+        <div class="tool"><code>collab_release</code><span>Release claim</span></div>
+        <div class="tool"><code>collab_claims_list</code><span>List all claims</span></div>
+        <div class="tool"><code>collab_message_send</code><span>Send message</span></div>
+        <div class="tool"><code>collab_message_list</code><span>Read messages</span></div>
+        <div class="tool"><code>collab_decision_add</code><span>Record decision</span></div>
+        <div class="tool"><code>collab_decision_list</code><span>List decisions</span></div>
       </div>
     </div>
 
@@ -415,6 +415,24 @@ export default {
       return handleMcpRequest(request, env, authContext);
     }
 
-    return new Response('Not found', { status: 404 });
+    // Handle OAuth discovery - indicate this server uses Bearer token auth, not OAuth
+    if (pathname === '/.well-known/oauth-authorization-server') {
+      return new Response(
+        JSON.stringify({
+          error: 'oauth_not_supported',
+          error_description: 'This server uses Bearer token authentication, not OAuth. Include your API token in the Authorization header.',
+        }),
+        {
+          status: 404,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        }
+      );
+    }
+
+    // Return JSON 404 for all other routes
+    return new Response(
+      JSON.stringify({ error: 'not_found', message: 'The requested resource was not found' }),
+      { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
   },
 };

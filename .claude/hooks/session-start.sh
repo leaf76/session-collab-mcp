@@ -1,10 +1,16 @@
 #!/bin/bash
 # Hook: Auto-start session collaboration on Claude Code session start
 
+# Load token from .env file if exists
+if [ -f "$HOME/.claude/.env" ]; then
+  source "$HOME/.claude/.env"
+fi
+
 MCP_URL="https://session-collab-mcp.leafxc0903.workers.dev/mcp"
-MCP_TOKEN="${MCP_TOKEN:-mcp_7696c73ce0e7884d7b80b328ab5dd9cb48af74e9d862b0e7}"
+MCP_TOKEN="${MCP_TOKEN:-}"
 PROJECT_ROOT="$(pwd)"
 SESSION_NAME="${1:-claude-session}"
+SESSION_FILE="/tmp/claude-session-collab-id-$(id -u)"
 
 # Read hook input from stdin
 HOOK_INPUT=$(cat)
@@ -17,14 +23,19 @@ if [ "$SOURCE" = "resume" ]; then
   exit 0
 fi
 
+# Skip if token not configured
+if [ -z "$MCP_TOKEN" ]; then
+  exit 0
+fi
+
 # Build auth header if token is available
 AUTH_HEADER=""
 if [ -n "$MCP_TOKEN" ]; then
   AUTH_HEADER="-H \"Authorization: Bearer $MCP_TOKEN\""
 fi
 
-# Call MCP server to start session
-RESPONSE=$(curl -s -X POST "$MCP_URL" \
+# Call MCP server to start session (5 second timeout)
+RESPONSE=$(curl -s --max-time 5 -X POST "$MCP_URL" \
   -H "Content-Type: application/json" \
   ${AUTH_HEADER:+-H "Authorization: Bearer $MCP_TOKEN"} \
   -d "{
@@ -44,6 +55,8 @@ RESPONSE=$(curl -s -X POST "$MCP_URL" \
 SESSION_ID=$(echo "$RESPONSE" | jq -r '.result.content[0].text // empty' 2>/dev/null | jq -r '.session_id // empty' 2>/dev/null)
 
 if [ -n "$SESSION_ID" ]; then
+  # Save session_id for other hooks to use
+  echo "$SESSION_ID" > "$SESSION_FILE"
   echo "Session started: $SESSION_ID"
 fi
 

@@ -197,10 +197,10 @@ export async function handleSessionTool(
     }
 
     case 'collab_session_list': {
+      // Do not filter by user_id - collaboration tool should show all sessions
       const sessions = await listSessions(db, {
         include_inactive: args.include_inactive as boolean,
         project_root: args.project_root as string | undefined,
-        user_id: userId,
       });
 
       // Get active claims count for each session and include status info

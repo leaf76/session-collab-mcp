@@ -150,8 +150,15 @@ export function generateAppHtml(origin: string): string {
 
     .dashboard-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      grid-template-columns: 300px 1fr;
       gap: 1.5rem;
+      align-items: start;
+    }
+
+    @media (max-width: 768px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     .card {
@@ -174,6 +181,30 @@ export function generateAppHtml(origin: string): string {
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
+    }
+
+    .session-list {
+      max-height: 70vh;
+      overflow-y: auto;
+      padding-right: 0.5rem;
+    }
+
+    .session-list::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .session-list::-webkit-scrollbar-track {
+      background: var(--bg-input);
+      border-radius: 3px;
+    }
+
+    .session-list::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    .session-list::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
     }
 
     .token-item, .session-item {
@@ -294,6 +325,203 @@ export function generateAppHtml(origin: string): string {
 
     .empty-state p { margin-bottom: 1rem; }
 
+    .setup-guide {
+      grid-column: 1 / -1;
+    }
+
+    .setup-guide .collapsible-content {
+      max-height: 0;
+      overflow: hidden;
+    }
+
+    .setup-guide .collapsible-content.expanded {
+      max-height: 800px;
+      overflow-y: auto;
+    }
+
+    .setup-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .setup-step {
+      display: flex;
+      gap: 1rem;
+      padding: 1rem;
+      background: var(--bg-secondary);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .step-number {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 0.875rem;
+      flex-shrink: 0;
+    }
+
+    .step-content h4 {
+      font-size: 0.9375rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .step-content p {
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      margin-bottom: 0.5rem;
+    }
+
+    .code-block {
+      background: var(--bg-input);
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--accent-green);
+      border: 1px solid var(--border);
+    }
+
+    .copy-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.625rem;
+      cursor: pointer;
+      margin-left: 0.5rem;
+    }
+
+    .copy-btn:hover {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+    }
+
+    .collapsible-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .collapsible-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+
+    .collapsible-content.expanded {
+      max-height: 2000px;
+    }
+
+    .expand-icon {
+      transition: transform 0.3s ease;
+    }
+
+    .expand-icon.rotated {
+      transform: rotate(180deg);
+    }
+
+    .session-item {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.75rem;
+    }
+
+    .session-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .current-task {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: rgba(96, 165, 250, 0.1);
+      border-radius: 6px;
+      border-left: 3px solid var(--accent-blue);
+      font-size: 0.8125rem;
+      color: var(--text-primary);
+    }
+
+    .current-task-label {
+      color: var(--accent-blue);
+      font-weight: 500;
+      font-size: 0.75rem;
+    }
+
+    .session-todos {
+      display: flex;
+      flex-direction: column;
+      gap: 0.375rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .todo-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.375rem 0.5rem;
+      background: var(--bg-input);
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+
+    .todo-status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .todo-status.pending { background: var(--text-muted); }
+    .todo-status.in_progress {
+      background: var(--accent-blue);
+      box-shadow: 0 0 6px var(--accent-blue);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    .todo-status.completed { background: var(--accent-green); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .todo-order {
+      color: var(--text-muted);
+      font-size: 0.625rem;
+      font-weight: 600;
+      min-width: 1rem;
+    }
+
+    .todo-content {
+      flex: 1;
+      color: var(--text-secondary);
+    }
+
+    .todo-item.in_progress .todo-content {
+      color: var(--accent-blue);
+      font-weight: 500;
+    }
+
+    .todo-item.completed .todo-content {
+      color: var(--text-muted);
+      text-decoration: line-through;
+    }
+
     .loading { text-align: center; padding: 2rem; }
 
     .spinner {
@@ -382,6 +610,89 @@ export function generateAppHtml(origin: string): string {
             </div>
             <div id="sessionList" class="session-list"></div>
           </div>
+
+          <div class="card setup-guide">
+            <div class="card-header collapsible-header" id="setupGuideHeader">
+              <h3 class="card-title">Setup Guide</h3>
+              <span class="expand-icon" id="expandIcon">&#9660;</span>
+            </div>
+            <div class="collapsible-content" id="setupGuideContent">
+              <div class="setup-steps">
+                <div class="setup-step">
+                  <div class="step-number">1</div>
+                  <div class="step-content">
+                    <h4>Save API Token</h4>
+                    <p>Copy your token and save it to ~/.claude/.env</p>
+                    <div class="code-block" id="envCode">MCP_TOKEN="your-token-here"</div>
+                  </div>
+                </div>
+
+                <div class="setup-step">
+                  <div class="step-number">2</div>
+                  <div class="step-content">
+                    <h4>Create Hook Scripts</h4>
+                    <p>Create .claude/hooks/ directory in your project and add these scripts:</p>
+                    <div class="code-block">mkdir -p .claude/hooks</div>
+                  </div>
+                </div>
+
+                <div class="setup-step">
+                  <div class="step-number">3</div>
+                  <div class="step-content">
+                    <h4>Configure .claude/settings.json</h4>
+                    <p>Add hooks configuration to your project:</p>
+                    <div class="code-block" id="settingsCode">{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "bash .claude/hooks/session-start.sh my-session"
+      }]
+    }],
+    "PreToolUse": [{
+      "matcher": "Edit|Write",
+      "hooks": [{
+        "type": "command",
+        "command": "bash .claude/hooks/check-claims.sh"
+      }]
+    }],
+    "PostToolUse": [{
+      "matcher": "TodoWrite",
+      "hooks": [{
+        "type": "command",
+        "command": "bash .claude/hooks/todo-sync.sh"
+      }]
+    }]
+  }
+}</div>
+                    <button class="btn btn-secondary btn-sm" id="copySettingsBtn" style="margin-top: 0.5rem;">Copy JSON</button>
+                  </div>
+                </div>
+
+                <div class="setup-step">
+                  <div class="step-number">4</div>
+                  <div class="step-content">
+                    <h4>Download Hook Scripts</h4>
+                    <p>Get the hook scripts from the repository or create them manually:</p>
+                    <div class="code-block"># session-start.sh - Register session on new conversation
+# check-claims.sh  - Check file conflicts before editing
+# todo-sync.sh     - Sync todo list after updates
+
+# See CLAUDE.md in the repo for full script contents</div>
+                  </div>
+                </div>
+
+                <div class="setup-step">
+                  <div class="step-number">5</div>
+                  <div class="step-content">
+                    <h4>Restart Claude Code</h4>
+                    <p>Start a new conversation to activate the hooks. You should see your session appear above!</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </main>
@@ -459,6 +770,8 @@ export function generateAppHtml(origin: string): string {
         $('closeTokenModal').addEventListener('click', () => closeModal('tokenCreatedModal'));
         $('createTokenForm').addEventListener('submit', handleCreateToken);
         $('copyTokenBtn').addEventListener('click', copyToken);
+        $('setupGuideHeader').addEventListener('click', toggleSetupGuide);
+        $('copySettingsBtn').addEventListener('click', copySettings);
 
         if (accessToken) checkAuth();
       }
@@ -716,6 +1029,47 @@ export function generateAppHtml(origin: string): string {
         });
       }
 
+      function toggleSetupGuide() {
+        const content = $('setupGuideContent');
+        const icon = $('expandIcon');
+        content.classList.toggle('expanded');
+        icon.classList.toggle('rotated');
+      }
+
+      function copySettings() {
+        const settingsJson = \`{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "bash .claude/hooks/session-start.sh my-session"
+      }]
+    }],
+    "PreToolUse": [{
+      "matcher": "Edit|Write",
+      "hooks": [{
+        "type": "command",
+        "command": "bash .claude/hooks/check-claims.sh"
+      }]
+    }],
+    "PostToolUse": [{
+      "matcher": "TodoWrite",
+      "hooks": [{
+        "type": "command",
+        "command": "bash .claude/hooks/todo-sync.sh"
+      }]
+    }]
+  }
+}\`;
+        navigator.clipboard.writeText(settingsJson).then(() => {
+          const btn = $('copySettingsBtn');
+          const originalText = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = originalText; }, 2000);
+        });
+      }
+
       async function loadSessions() {
         const container = $('sessionList');
         container.textContent = '';
@@ -756,17 +1110,52 @@ export function generateAppHtml(origin: string): string {
           result.sessions.forEach(session => {
             const item = createEl('div', 'session-item');
 
+            // Session header with info and status badge
+            const header = createEl('div', 'session-header');
+
             const info = createEl('div', 'session-info');
             info.appendChild(createEl('h4', '', session.name || session.id.slice(0, 8)));
 
             const meta = createEl('div', 'session-meta');
-            meta.textContent = (session.project_root || 'No project') + ' - ' + formatDate(session.last_heartbeat);
+            // Show only the last part of the path for brevity
+            const projectName = session.project_root ? session.project_root.split('/').pop() : 'No project';
+            meta.textContent = projectName + ' - ' + formatDate(session.last_heartbeat);
             info.appendChild(meta);
 
             const badge = createEl('span', 'status-badge status-' + session.status, session.status);
 
-            item.appendChild(info);
-            item.appendChild(badge);
+            header.appendChild(info);
+            header.appendChild(badge);
+            item.appendChild(header);
+
+            // Current task display
+            if (session.current_task) {
+              const taskEl = createEl('div', 'current-task');
+              taskEl.appendChild(createEl('span', 'current-task-label', 'Working on:'));
+              taskEl.appendChild(createEl('span', '', session.current_task));
+              item.appendChild(taskEl);
+            }
+
+            // Todo list display
+            if (session.todos && session.todos.length > 0) {
+              const todosEl = createEl('div', 'session-todos');
+
+              session.todos.forEach((todo, index) => {
+                const todoItem = createEl('div', 'todo-item ' + todo.status);
+
+                const statusDot = createEl('span', 'todo-status ' + todo.status);
+                const orderNum = createEl('span', 'todo-order', String(index + 1));
+                const content = createEl('span', 'todo-content', todo.content);
+
+                todoItem.appendChild(statusDot);
+                todoItem.appendChild(orderNum);
+                todoItem.appendChild(content);
+                todosEl.appendChild(todoItem);
+              });
+
+              item.appendChild(todosEl);
+            }
+
             container.appendChild(item);
           });
         } catch (err) {
