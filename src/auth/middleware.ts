@@ -1,6 +1,6 @@
 // Authentication middleware
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database } from '../db/sqlite-adapter.js';
 import { verifyJwt } from './jwt';
 import { getApiTokenByHash, updateApiTokenLastUsed } from '../db/auth-queries';
 import { sha256, timingSafeEqual } from '../utils/crypto';

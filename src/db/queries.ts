@@ -1,6 +1,6 @@
 // Database queries for Session Collaboration MCP
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database } from './sqlite-adapter.js';
 import type {
   Session,
   Claim,

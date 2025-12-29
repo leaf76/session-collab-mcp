@@ -1,6 +1,6 @@
 // Authentication API handlers
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database } from '../db/sqlite-adapter.js';
 import { hashPassword, verifyPassword, validatePasswordStrength } from './password';
 import { createAccessToken, createRefreshToken, verifyJwt, getTokenExpiry } from './jwt';
 import {

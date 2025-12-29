@@ -1,6 +1,6 @@
 // MCP Server implementation for Session Collaboration
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database } from '../db/sqlite-adapter.js';
 import {
   JsonRpcRequestSchema,
   type JsonRpcRequest,
@@ -122,5 +122,34 @@ export function parseRequest(body: string): JsonRpcRequest | null {
     return result.success ? result.data : null;
   } catch {
     return null;
+  }
+}
+
+// Export tools list for CLI
+export function getMcpTools(): McpTool[] {
+  return ALL_TOOLS;
+}
+
+// Handle MCP tool call for CLI
+export async function handleMcpRequest(
+  db: D1Database,
+  name: string,
+  args: Record<string, unknown>
+): Promise<McpToolResult> {
+  try {
+    if (name.startsWith('collab_session_') || name === 'collab_status_update') {
+      return await handleSessionTool(db, name, args);
+    } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
+      return await handleClaimTool(db, name, args);
+    } else if (name.startsWith('collab_message_')) {
+      return await handleMessageTool(db, name, args);
+    } else if (name.startsWith('collab_decision_')) {
+      return await handleDecisionTool(db, name, args);
+    } else {
+      return createToolResult(`Unknown tool: ${name}`, true);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Tool execution failed';
+    return createToolResult(message, true);
   }
 }

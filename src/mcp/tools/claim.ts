@@ -1,6 +1,6 @@
 // Claim management tools (WIP declarations)
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
 import type { ClaimScope } from '../../db/types';
@@ -213,13 +213,40 @@ export async function handleClaimTool(
         );
       }
 
+      // Check todos status if session_id provided
+      let hasInProgressTodo = false;
+      let todosStatus: { total: number; in_progress: number; completed: number; pending: number } | null = null;
+      if (sessionId) {
+        const session = await getSession(db, sessionId);
+        if (session?.todos) {
+          try {
+            const todos = JSON.parse(session.todos) as Array<{ status: string }>;
+            const inProgress = todos.filter((t) => t.status === 'in_progress').length;
+            const completed = todos.filter((t) => t.status === 'completed').length;
+            const pending = todos.filter((t) => t.status === 'pending').length;
+            hasInProgressTodo = inProgress > 0;
+            todosStatus = {
+              total: todos.length,
+              in_progress: inProgress,
+              completed,
+              pending,
+            };
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
       const conflicts = await checkConflicts(db, files, sessionId);
 
       if (conflicts.length === 0) {
         return createToolResult(
           JSON.stringify({
+            has_conflicts: false,
             safe: true,
             message: 'These files are not being worked on by other sessions.',
+            has_in_progress_todo: hasInProgressTodo,
+            todos_status: todosStatus,
           })
         );
       }
@@ -245,9 +272,12 @@ export async function handleClaimTool(
       return createToolResult(
         JSON.stringify(
           {
+            has_conflicts: true,
             safe: false,
             conflicts: conflictDetails,
             warning: `⚠️ ${conflicts.length} file(s) are being worked on by ${bySession.size} other session(s). Coordinate before modifying.`,
+            has_in_progress_todo: hasInProgressTodo,
+            todos_status: todosStatus,
           },
           null,
           2

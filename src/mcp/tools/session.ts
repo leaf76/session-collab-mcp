@@ -1,6 +1,6 @@
 // Session management tools
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
 import {

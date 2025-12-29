@@ -1,27 +1,35 @@
 {
   "name": "session-collab-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server for Claude Code session collaboration - prevents conflicts between parallel sessions",
   "type": "module",
+  "bin": {
+    "session-collab-mcp": "./bin/session-collab-mcp"
+  },
+  "files": [
+    "bin",
+    "src",
+    "migrations"
+  ],
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:migrate:local": "wrangler d1 execute session-collab-db --local --file=./migrations/0001_init.sql && wrangler d1 execute session-collab-db --local --file=./migrations/0002_auth.sql",
-    "db:migrate:remote": "wrangler d1 execute session-collab-db --remote --file=./migrations/0001_init.sql && wrangler d1 execute session-collab-db --remote --file=./migrations/0002_auth.sql",
-    "db:migrate:auth:local": "wrangler d1 execute session-collab-db --local --file=./migrations/0002_auth.sql",
-    "db:migrate:auth:remote": "wrangler d1 execute session-collab-db --remote --file=./migrations/0002_auth.sql",
+    "build": "tsup",
+    "start": "node dist/cli.js",
+    "start:dev": "tsx src/cli.ts",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "test": "vitest"
   },
   "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "tsx": "^4.19.2",
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241218.0",
+    "@types/better-sqlite3": "^7.6.12",
+    "eslint": "^9.17.0",
+    "tsup": "^8.5.1",
     "typescript": "^5.7.2",
-    "wrangler": "^3.99.0",
-    "vitest": "^2.1.8",
-    "eslint": "^9.17.0"
+    "vitest": "^2.1.8"
   }
 }

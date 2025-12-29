@@ -1,6 +1,6 @@
 // Database queries for authentication
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database } from './sqlite-adapter.js';
 import type { User, UserPublic, ApiToken, ApiTokenPublic, RefreshToken } from './types';
 import { generateId, sha256 } from '../utils/crypto';
 

@@ -1,6 +1,6 @@
 // Token management API handlers
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database } from '../db/sqlite-adapter.js';
 import { z } from 'zod';
 import { generateApiToken } from './generator';
 import { createApiToken, listApiTokens, revokeApiToken } from '../db/auth-queries';
