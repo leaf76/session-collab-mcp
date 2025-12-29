@@ -17,11 +17,7 @@ import type {
   SymbolClaim,
   SymbolType,
 } from './types';
-
-// Helper to generate UUID v4
-function generateId(): string {
-  return crypto.randomUUID();
-}
+import { generateId } from '../utils/crypto.js';
 
 // ============ Session Queries ============
 
@@ -805,21 +801,6 @@ export async function getReferencesForSymbol(
   return result.results;
 }
 
-export async function getReferencesToFile(
-  db: DatabaseAdapter,
-  filePath: string
-): Promise<SymbolReference[]> {
-  const result = await db
-    .prepare(
-      `SELECT * FROM symbol_references
-       WHERE ref_file = ?
-       ORDER BY source_file, source_symbol`
-    )
-    .bind(filePath)
-    .all<SymbolReference>();
-
-  return result.results;
-}
 
 export async function analyzeClaimImpact(
   db: DatabaseAdapter,

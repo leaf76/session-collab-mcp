@@ -113,13 +113,6 @@ export interface Claim {
   completed_summary: string | null;
 }
 
-export interface ClaimFile {
-  id: number;
-  claim_id: string;
-  file_path: string;
-  is_pattern: number; // 0 or 1, SQLite boolean
-}
-
 // Symbol types for fine-grained conflict detection
 export type SymbolType = 'function' | 'class' | 'method' | 'variable' | 'block' | 'other';
 
