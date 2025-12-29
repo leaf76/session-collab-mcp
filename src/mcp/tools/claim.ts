@@ -1,12 +1,19 @@
 // Claim management tools (WIP declarations)
 
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
-import type { McpTool, McpToolResult } from '../protocol';
-import { createToolResult } from '../protocol';
-import type { SessionConfig } from '../../db/types';
-import { DEFAULT_SESSION_CONFIG } from '../../db/types';
-import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession } from '../../db/queries';
+import type { McpTool, McpToolResult } from '../protocol.js';
+import { createToolResult } from '../protocol.js';
+import type { SessionConfig } from '../../db/types.js';
+import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
+import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession } from '../../db/queries.js';
 import { claimCreateSchema, claimCheckSchema, claimReleaseSchema, claimListSchema, validateInput } from '../schemas.js';
+import {
+  errorResponse,
+  successResponse,
+  validationError,
+  validateActiveSession,
+  ERROR_CODES,
+} from '../../utils/response.js';
 
 export const claimTools: McpTool[] = [
   {
@@ -160,25 +167,16 @@ export async function handleClaimTool(
       // Validate input with Zod schema
       const validation = validateInput(claimCreateSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
 
       const { session_id: sessionId, files, symbols, intent, scope = 'medium' } = validation.data;
       const hasSymbols = symbols && symbols.length > 0;
 
       // Verify session exists and is active
-      const session = await getSession(db, sessionId);
-      if (!session || session.status !== 'active') {
-        return createToolResult(
-          JSON.stringify({
-            error: 'SESSION_INVALID',
-            message: 'Session not found or inactive. Please start a new session.',
-          }),
-          true
-        );
+      const sessionResult = await validateActiveSession(db, sessionId);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
       }
 
       // Build file list from both files and symbols
@@ -260,10 +258,7 @@ export async function handleClaimTool(
       // Validate input with Zod schema
       const validation = validateInput(claimCheckSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
 
       const { files, symbols, session_id: sessionId } = validation.data;
@@ -446,22 +441,16 @@ export async function handleClaimTool(
       // Validate input with Zod schema
       const validation = validateInput(claimReleaseSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
 
       const { session_id: sessionId, claim_id: claimId, status, summary, force } = validation.data;
 
       const claim = await getClaim(db, claimId);
       if (!claim) {
-        return createToolResult(
-          JSON.stringify({
-            error: 'CLAIM_NOT_FOUND',
-            message: 'Claim not found. It may have already been released.',
-          }),
-          true
+        return errorResponse(
+          ERROR_CODES.CLAIM_NOT_FOUND,
+          'Claim not found. It may have already been released.'
         );
       }
 
@@ -506,12 +495,9 @@ export async function handleClaimTool(
       }
 
       if (claim.status !== 'active') {
-        return createToolResult(
-          JSON.stringify({
-            error: 'CLAIM_ALREADY_RELEASED',
-            message: `Claim was already ${claim.status}.`,
-          }),
-          true
+        return errorResponse(
+          ERROR_CODES.CLAIM_ALREADY_RELEASED,
+          `Claim was already ${claim.status}.`
         );
       }
 
@@ -535,35 +521,26 @@ export async function handleClaimTool(
       // Validate input with Zod schema (all fields optional)
       const validation = validateInput(claimListSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
 
       const { session_id, status = 'active', project_root } = validation.data;
       const claims = await listClaims(db, { session_id, status, project_root });
 
-      return createToolResult(
-        JSON.stringify(
-          {
-            claims: claims.map((c) => ({
-              id: c.id,
-              session_id: c.session_id,
-              session_name: c.session_name,
-              files: c.files,
-              intent: c.intent,
-              scope: c.scope,
-              status: c.status,
-              created_at: c.created_at,
-              completed_summary: c.completed_summary,
-            })),
-            total: claims.length,
-          },
-          null,
-          2
-        )
-      );
+      return successResponse({
+        claims: claims.map((c) => ({
+          id: c.id,
+          session_id: c.session_id,
+          session_name: c.session_name,
+          files: c.files,
+          intent: c.intent,
+          scope: c.scope,
+          status: c.status,
+          created_at: c.created_at,
+          completed_summary: c.completed_summary,
+        })),
+        total: claims.length,
+      }, true);
     }
 
     default:

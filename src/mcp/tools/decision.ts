@@ -1,10 +1,15 @@
 // Decision recording tools
 
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
-import type { McpTool, McpToolResult } from '../protocol';
-import { createToolResult } from '../protocol';
-import { addDecision, listDecisions, getSession } from '../../db/queries';
-import { validateInput, decisionAddSchema, decisionListSchema } from '../schemas';
+import type { McpTool, McpToolResult } from '../protocol.js';
+import { createToolResult } from '../protocol.js';
+import { addDecision, listDecisions } from '../../db/queries.js';
+import { validateInput, decisionAddSchema, decisionListSchema } from '../schemas.js';
+import {
+  successResponse,
+  validationError,
+  validateActiveSession,
+} from '../../utils/response.js';
 
 export const decisionTools: McpTool[] = [
   {
@@ -63,23 +68,14 @@ export async function handleDecisionTool(
     case 'collab_decision_add': {
       const validation = validateInput(decisionAddSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
-      // Verify session
-      const session = await getSession(db, input.session_id);
-      if (!session || session.status !== 'active') {
-        return createToolResult(
-          JSON.stringify({
-            error: 'SESSION_INVALID',
-            message: 'Session not found or inactive.',
-          }),
-          true
-        );
+      // Verify session exists and is active
+      const sessionResult = await validateActiveSession(db, input.session_id);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
       }
 
       const decision = await addDecision(db, {
@@ -89,22 +85,17 @@ export async function handleDecisionTool(
         description: input.description,
       });
 
-      return createToolResult(
-        JSON.stringify({
-          success: true,
-          decision_id: decision.id,
-          message: 'Decision recorded successfully.',
-        })
-      );
+      return successResponse({
+        success: true,
+        decision_id: decision.id,
+        message: 'Decision recorded successfully.',
+      });
     }
 
     case 'collab_decision_list': {
       const validation = validateInput(decisionListSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
@@ -113,22 +104,16 @@ export async function handleDecisionTool(
         limit: input.limit ?? 20,
       });
 
-      return createToolResult(
-        JSON.stringify(
-          {
-            decisions: decisions.map((d) => ({
-              id: d.id,
-              category: d.category,
-              title: d.title,
-              description: d.description,
-              created_at: d.created_at,
-            })),
-            total: decisions.length,
-          },
-          null,
-          2
-        )
-      );
+      return successResponse({
+        decisions: decisions.map((d) => ({
+          id: d.id,
+          category: d.category,
+          title: d.title,
+          description: d.description,
+          created_at: d.created_at,
+        })),
+        total: decisions.length,
+      }, true);
     }
 
     default:

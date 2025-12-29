@@ -1,10 +1,17 @@
 // Inter-session messaging tools
 
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
-import type { McpTool, McpToolResult } from '../protocol';
-import { createToolResult } from '../protocol';
-import { sendMessage, listMessages, getSession } from '../../db/queries';
-import { validateInput, messageSendSchema, messageListSchema } from '../schemas';
+import type { McpTool, McpToolResult } from '../protocol.js';
+import { createToolResult } from '../protocol.js';
+import { sendMessage, listMessages } from '../../db/queries.js';
+import { validateInput, messageSendSchema, messageListSchema } from '../schemas.js';
+import {
+  errorResponse,
+  successResponse,
+  validationError,
+  validateActiveSession,
+  ERROR_CODES,
+} from '../../utils/response.js';
 
 export const messageTools: McpTool[] = [
   {
@@ -62,35 +69,23 @@ export async function handleMessageTool(
     case 'collab_message_send': {
       const validation = validateInput(messageSendSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
       // Verify sender session
-      const fromSession = await getSession(db, input.from_session_id);
-      if (!fromSession || fromSession.status !== 'active') {
-        return createToolResult(
-          JSON.stringify({
-            error: 'SESSION_INVALID',
-            message: 'Your session is not active.',
-          }),
-          true
-        );
+      const senderResult = await validateActiveSession(db, input.from_session_id);
+      if (!senderResult.valid) {
+        return errorResponse(ERROR_CODES.SESSION_INVALID, 'Your session is not active.');
       }
 
       // Verify target session if specified
       if (input.to_session_id) {
-        const toSession = await getSession(db, input.to_session_id);
-        if (!toSession || toSession.status !== 'active') {
-          return createToolResult(
-            JSON.stringify({
-              error: 'TARGET_SESSION_INVALID',
-              message: 'Target session not found or inactive.',
-            }),
-            true
+        const targetResult = await validateActiveSession(db, input.to_session_id);
+        if (!targetResult.valid) {
+          return errorResponse(
+            ERROR_CODES.TARGET_SESSION_INVALID,
+            'Target session not found or inactive.'
           );
         }
       }
@@ -101,23 +96,18 @@ export async function handleMessageTool(
         content: input.content,
       });
 
-      return createToolResult(
-        JSON.stringify({
-          success: true,
-          message_id: message.id,
-          sent_to: input.to_session_id ?? 'all sessions (broadcast)',
-          message: 'Message sent successfully.',
-        })
-      );
+      return successResponse({
+        success: true,
+        message_id: message.id,
+        sent_to: input.to_session_id ?? 'all sessions (broadcast)',
+        message: 'Message sent successfully.',
+      });
     }
 
     case 'collab_message_list': {
       const validation = validateInput(messageListSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
@@ -131,31 +121,23 @@ export async function handleMessageTool(
       });
 
       if (messages.length === 0) {
-        return createToolResult(
-          JSON.stringify({
-            messages: [],
-            message: unreadOnly ? 'No unread messages.' : 'No messages.',
-          })
-        );
+        return successResponse({
+          messages: [],
+          message: unreadOnly ? 'No unread messages.' : 'No messages.',
+        });
       }
 
-      return createToolResult(
-        JSON.stringify(
-          {
-            messages: messages.map((m) => ({
-              id: m.id,
-              from_session_id: m.from_session_id,
-              content: m.content,
-              created_at: m.created_at,
-              is_broadcast: m.to_session_id === null,
-            })),
-            total: messages.length,
-            marked_as_read: markAsRead,
-          },
-          null,
-          2
-        )
-      );
+      return successResponse({
+        messages: messages.map((m) => ({
+          id: m.id,
+          from_session_id: m.from_session_id,
+          content: m.content,
+          created_at: m.created_at,
+          is_broadcast: m.to_session_id === null,
+        })),
+        total: messages.length,
+        marked_as_read: markAsRead,
+      }, true);
     }
 
     default:

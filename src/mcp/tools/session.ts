@@ -1,11 +1,10 @@
 // Session management tools
 
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
-import type { McpTool, McpToolResult } from '../protocol';
-import { createToolResult } from '../protocol';
+import type { McpTool, McpToolResult } from '../protocol.js';
+import { createToolResult } from '../protocol.js';
 import {
   createSession,
-  getSession,
   listSessions,
   updateSessionHeartbeat,
   updateSessionStatus,
@@ -13,9 +12,9 @@ import {
   endSession,
   cleanupStaleSessions,
   listClaims,
-} from '../../db/queries';
-import type { TodoItem, SessionConfig } from '../../db/types';
-import { DEFAULT_SESSION_CONFIG } from '../../db/types';
+} from '../../db/queries.js';
+import type { TodoItem, SessionConfig } from '../../db/types.js';
+import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
 import {
   validateInput,
   sessionStartSchema,
@@ -24,7 +23,15 @@ import {
   sessionHeartbeatSchema,
   statusUpdateSchema,
   configSchema,
-} from '../schemas';
+} from '../schemas.js';
+import {
+  errorResponse,
+  successResponse,
+  validationError,
+  validateActiveSession,
+  validateSessionExists,
+  ERROR_CODES,
+} from '../../utils/response.js';
 
 export const sessionTools: McpTool[] = [
   {
@@ -188,10 +195,7 @@ export async function handleSessionTool(
     case 'collab_session_start': {
       const validation = validateInput(sessionStartSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
@@ -228,38 +232,27 @@ export async function handleSessionTool(
     case 'collab_session_end': {
       const validation = validateInput(sessionEndSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
-      const session = await getSession(db, input.session_id);
-      if (!session) {
-        return createToolResult(
-          JSON.stringify({ error: 'SESSION_NOT_FOUND', message: 'Session not found' }),
-          true
-        );
+      const sessionResult = await validateSessionExists(db, input.session_id);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
       }
 
       await endSession(db, input.session_id, input.release_claims);
 
-      return createToolResult(
-        JSON.stringify({
-          success: true,
-          message: `Session ended. All claims marked as ${input.release_claims === 'complete' ? 'completed' : 'abandoned'}.`,
-        })
-      );
+      return successResponse({
+        success: true,
+        message: `Session ended. All claims marked as ${input.release_claims === 'complete' ? 'completed' : 'abandoned'}.`,
+      });
     }
 
     case 'collab_session_list': {
       const validation = validateInput(sessionListSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
@@ -313,10 +306,7 @@ export async function handleSessionTool(
     case 'collab_session_heartbeat': {
       const validation = validateInput(sessionHeartbeatSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
@@ -326,45 +316,31 @@ export async function handleSessionTool(
       });
 
       if (!updated) {
-        return createToolResult(
-          JSON.stringify({
-            error: 'SESSION_NOT_FOUND',
-            message: 'Session not found or inactive. Please start a new session.',
-          }),
-          true
+        return errorResponse(
+          ERROR_CODES.SESSION_NOT_FOUND,
+          'Session not found or inactive. Please start a new session.'
         );
       }
 
-      return createToolResult(
-        JSON.stringify({
-          success: true,
-          message: 'Heartbeat updated',
-          status_synced: !!(input.current_task || input.todos),
-        })
-      );
+      return successResponse({
+        success: true,
+        message: 'Heartbeat updated',
+        status_synced: !!(input.current_task || input.todos),
+      });
     }
 
     case 'collab_status_update': {
       const validation = validateInput(statusUpdateSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
       const todos = input.todos as TodoItem[] | undefined;
 
-      // Validate session exists
-      const session = await getSession(db, input.session_id);
-      if (!session || session.status !== 'active') {
-        return createToolResult(
-          JSON.stringify({
-            error: 'SESSION_INVALID',
-            message: 'Session not found or inactive.',
-          }),
-          true
-        );
+      // Validate session exists and is active
+      const sessionResult = await validateActiveSession(db, input.session_id);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
       }
 
       await updateSessionStatus(db, input.session_id, {
@@ -383,37 +359,27 @@ export async function handleSessionTool(
         };
       }
 
-      return createToolResult(
-        JSON.stringify({
-          success: true,
-          message: 'Status updated successfully.',
-          current_task: input.current_task ?? null,
-          progress,
-        })
-      );
+      return successResponse({
+        success: true,
+        message: 'Status updated successfully.',
+        current_task: input.current_task ?? null,
+        progress,
+      });
     }
 
     case 'collab_config': {
       const validation = validateInput(configSchema, args);
       if (!validation.success) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
-          true
-        );
+        return validationError(validation.error);
       }
       const input = validation.data;
 
-      // Validate session exists
-      const session = await getSession(db, input.session_id);
-      if (!session || session.status !== 'active') {
-        return createToolResult(
-          JSON.stringify({
-            error: 'SESSION_INVALID',
-            message: 'Session not found or inactive.',
-          }),
-          true
-        );
+      // Validate session exists and is active
+      const sessionResult = await validateActiveSession(db, input.session_id);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
       }
+      const { session } = sessionResult;
 
       // Get current config or default
       let currentConfig: SessionConfig = DEFAULT_SESSION_CONFIG;
@@ -439,13 +405,11 @@ export async function handleSessionTool(
 
       await updateSessionConfig(db, input.session_id, newConfig);
 
-      return createToolResult(
-        JSON.stringify({
-          success: true,
-          message: 'Configuration updated.',
-          config: newConfig,
-        })
-      );
+      return successResponse({
+        success: true,
+        message: 'Configuration updated.',
+        config: newConfig,
+      });
     }
 
     default:

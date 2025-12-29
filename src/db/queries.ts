@@ -15,7 +15,6 @@ import type {
   SessionProgress,
   SessionConfig,
   SymbolClaim,
-  SymbolType,
 } from './types';
 import { generateId } from '../utils/crypto.js';
 
@@ -421,179 +420,140 @@ export async function checkConflicts(
   excludeSessionId?: string,
   symbols?: SymbolClaim[]
 ): Promise<ConflictInfo[]> {
+  if (files.length === 0) {
+    return [];
+  }
+
   const conflicts: ConflictInfo[] = [];
 
   // Build a map of file -> symbols for quick lookup
   const symbolsByFile = new Map<string, Set<string>>();
+  const allSymbolNames = new Set<string>();
   if (symbols && symbols.length > 0) {
     for (const sc of symbols) {
       const existing = symbolsByFile.get(sc.file) ?? new Set();
       for (const sym of sc.symbols) {
         existing.add(sym);
+        allSymbolNames.add(sym);
       }
       symbolsByFile.set(sc.file, existing);
     }
   }
 
-  for (const filePath of files) {
-    const requestedSymbols = symbolsByFile.get(filePath);
+  const hasSymbols = symbolsByFile.size > 0;
+  const sessionFilter = excludeSessionId ? ' AND c.session_id != ?' : '';
 
-    // First check if there are symbol-level claims for this file
-    if (requestedSymbols && requestedSymbols.size > 0) {
-      // Symbol-level conflict check
-      let symbolQuery = `
-        SELECT
-          c.id as claim_id,
-          c.session_id,
-          s.name as session_name,
-          cs.file_path,
-          c.intent,
-          c.scope,
-          c.created_at,
-          cs.symbol_name,
-          cs.symbol_type
-        FROM claim_symbols cs
-        JOIN claims c ON cs.claim_id = c.id
-        JOIN sessions s ON c.session_id = s.id
-        WHERE c.status = 'active'
-          AND s.status = 'active'
-          AND cs.file_path = ?
-          AND cs.symbol_name IN (${Array.from(requestedSymbols).map(() => '?').join(',')})
-      `;
-      const symbolBindings: string[] = [filePath, ...Array.from(requestedSymbols)];
+  // Query 1: File-level conflicts (batch all files)
+  const fileConditions = files.map(() => '(cf.file_path = ? OR (cf.is_pattern = 1 AND ? GLOB cf.file_path))').join(' OR ');
 
-      if (excludeSessionId) {
-        symbolQuery += ' AND c.session_id != ?';
-        symbolBindings.push(excludeSessionId);
-      }
+  let fileQuery = `
+    SELECT DISTINCT
+      c.id as claim_id,
+      c.session_id,
+      s.name as session_name,
+      cf.file_path,
+      c.intent,
+      c.scope,
+      c.created_at,
+      NULL as symbol_name,
+      NULL as symbol_type,
+      'file' as conflict_level
+    FROM claim_files cf
+    JOIN claims c ON cf.claim_id = c.id
+    JOIN sessions s ON c.session_id = s.id
+    WHERE c.status = 'active'
+      AND s.status = 'active'
+      AND (${fileConditions})
+      ${sessionFilter}
+  `;
 
-      const symbolResult = await db
-        .prepare(symbolQuery)
-        .bind(...symbolBindings)
-        .all<ConflictInfo & { symbol_name: string; symbol_type: SymbolType }>();
-
-      for (const r of symbolResult.results) {
-        conflicts.push({
-          ...r,
-          conflict_level: 'symbol',
-        });
-      }
-
-      // Also check if there's a file-level claim (no symbols = whole file claimed)
-      let fileClaimQuery = `
-        SELECT
-          c.id as claim_id,
-          c.session_id,
-          s.name as session_name,
-          cf.file_path,
-          c.intent,
-          c.scope,
-          c.created_at
-        FROM claim_files cf
-        JOIN claims c ON cf.claim_id = c.id
-        JOIN sessions s ON c.session_id = s.id
-        WHERE c.status = 'active'
-          AND s.status = 'active'
-          AND (cf.file_path = ? OR (cf.is_pattern = 1 AND ? GLOB cf.file_path))
-          AND NOT EXISTS (
-            SELECT 1 FROM claim_symbols cs WHERE cs.claim_id = c.id AND cs.file_path = cf.file_path
-          )
-      `;
-      const fileClaimBindings: string[] = [filePath, filePath];
-
-      if (excludeSessionId) {
-        fileClaimQuery += ' AND c.session_id != ?';
-        fileClaimBindings.push(excludeSessionId);
-      }
-
-      const fileClaimResult = await db
-        .prepare(fileClaimQuery)
-        .bind(...fileClaimBindings)
-        .all<Omit<ConflictInfo, 'conflict_level'>>();
-
-      for (const r of fileClaimResult.results) {
-        conflicts.push({
-          ...r,
-          conflict_level: 'file',
-        });
-      }
-    } else {
-      // No symbols specified - check both file-level and symbol-level claims
-      // File-level claims (whole file)
-      let fileQuery = `
-        SELECT
-          c.id as claim_id,
-          c.session_id,
-          s.name as session_name,
-          cf.file_path,
-          c.intent,
-          c.scope,
-          c.created_at
-        FROM claim_files cf
-        JOIN claims c ON cf.claim_id = c.id
-        JOIN sessions s ON c.session_id = s.id
-        WHERE c.status = 'active'
-          AND s.status = 'active'
-          AND (cf.file_path = ? OR (cf.is_pattern = 1 AND ? GLOB cf.file_path))
-      `;
-      const fileBindings: string[] = [filePath, filePath];
-
-      if (excludeSessionId) {
-        fileQuery += ' AND c.session_id != ?';
-        fileBindings.push(excludeSessionId);
-      }
-
-      const fileResult = await db
-        .prepare(fileQuery)
-        .bind(...fileBindings)
-        .all<Omit<ConflictInfo, 'conflict_level'>>();
-
-      for (const r of fileResult.results) {
-        conflicts.push({
-          ...r,
-          conflict_level: 'file',
-        });
-      }
-
-      // Symbol-level claims on this file
-      let symbolOnlyQuery = `
-        SELECT DISTINCT
-          c.id as claim_id,
-          c.session_id,
-          s.name as session_name,
-          cs.file_path,
-          c.intent,
-          c.scope,
-          c.created_at,
-          cs.symbol_name,
-          cs.symbol_type
-        FROM claim_symbols cs
-        JOIN claims c ON cs.claim_id = c.id
-        JOIN sessions s ON c.session_id = s.id
-        WHERE c.status = 'active'
-          AND s.status = 'active'
-          AND cs.file_path = ?
-      `;
-      const symbolOnlyBindings: string[] = [filePath];
-
-      if (excludeSessionId) {
-        symbolOnlyQuery += ' AND c.session_id != ?';
-        symbolOnlyBindings.push(excludeSessionId);
-      }
-
-      const symbolOnlyResult = await db
-        .prepare(symbolOnlyQuery)
-        .bind(...symbolOnlyBindings)
-        .all<ConflictInfo & { symbol_name: string; symbol_type: SymbolType }>();
-
-      for (const r of symbolOnlyResult.results) {
-        conflicts.push({
-          ...r,
-          conflict_level: 'symbol',
-        });
-      }
-    }
+  // For symbol-level checks, exclude file claims that have symbol-level claims
+  if (hasSymbols) {
+    fileQuery += `
+      AND NOT EXISTS (
+        SELECT 1 FROM claim_symbols cs
+        WHERE cs.claim_id = c.id AND cs.file_path = cf.file_path
+      )
+    `;
   }
+
+  const fileBindings: string[] = files.flatMap(f => [f, f]);
+  if (excludeSessionId) {
+    fileBindings.push(excludeSessionId);
+  }
+
+  const fileResult = await db
+    .prepare(fileQuery)
+    .bind(...fileBindings)
+    .all<ConflictInfo>();
+
+  conflicts.push(...fileResult.results);
+
+  // Query 2: Symbol-level conflicts (batch all files)
+  const symbolFilePlaceholders = files.map(() => '?').join(',');
+  let symbolQuery: string;
+  let symbolBindings: string[];
+
+  if (hasSymbols && allSymbolNames.size > 0) {
+    // Check specific symbols
+    const symbolPlaceholders = Array.from(allSymbolNames).map(() => '?').join(',');
+    symbolQuery = `
+      SELECT DISTINCT
+        c.id as claim_id,
+        c.session_id,
+        s.name as session_name,
+        cs.file_path,
+        c.intent,
+        c.scope,
+        c.created_at,
+        cs.symbol_name,
+        cs.symbol_type,
+        'symbol' as conflict_level
+      FROM claim_symbols cs
+      JOIN claims c ON cs.claim_id = c.id
+      JOIN sessions s ON c.session_id = s.id
+      WHERE c.status = 'active'
+        AND s.status = 'active'
+        AND cs.file_path IN (${symbolFilePlaceholders})
+        AND cs.symbol_name IN (${symbolPlaceholders})
+        ${sessionFilter}
+    `;
+    symbolBindings = [...files, ...Array.from(allSymbolNames)];
+  } else {
+    // Check all symbols on these files
+    symbolQuery = `
+      SELECT DISTINCT
+        c.id as claim_id,
+        c.session_id,
+        s.name as session_name,
+        cs.file_path,
+        c.intent,
+        c.scope,
+        c.created_at,
+        cs.symbol_name,
+        cs.symbol_type,
+        'symbol' as conflict_level
+      FROM claim_symbols cs
+      JOIN claims c ON cs.claim_id = c.id
+      JOIN sessions s ON c.session_id = s.id
+      WHERE c.status = 'active'
+        AND s.status = 'active'
+        AND cs.file_path IN (${symbolFilePlaceholders})
+        ${sessionFilter}
+    `;
+    symbolBindings = [...files];
+  }
+
+  if (excludeSessionId) {
+    symbolBindings.push(excludeSessionId);
+  }
+
+  const symbolResult = await db
+    .prepare(symbolQuery)
+    .bind(...symbolBindings)
+    .all<ConflictInfo>();
+
+  conflicts.push(...symbolResult.results);
 
   // Deduplicate by claim_id + file_path + symbol_name
   const seen = new Set<string>();
@@ -679,14 +639,16 @@ export async function listMessages(
     .bind(...bindings)
     .all<Message>();
 
-  // Mark as read if requested
+  // Mark as read if requested - batch update for efficiency
   if (params.mark_as_read && messages.results.length > 0) {
     const now = new Date().toISOString();
     const ids = messages.results.map((m) => m.id);
+    const placeholders = ids.map(() => '?').join(',');
 
-    for (const id of ids) {
-      await db.prepare('UPDATE messages SET read_at = ? WHERE id = ? AND read_at IS NULL').bind(now, id).run();
-    }
+    await db
+      .prepare(`UPDATE messages SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`)
+      .bind(now, ...ids)
+      .run();
   }
 
   return messages.results;
@@ -759,29 +721,39 @@ export async function storeReferences(
   sessionId: string,
   references: ReferenceInput[]
 ): Promise<{ stored: number; skipped: number }> {
-  let stored = 0;
-  let skipped = 0;
   const now = new Date().toISOString();
+
+  // Collect all insert statements for batch execution
+  const statements: ReturnType<typeof db.prepare>[] = [];
 
   for (const ref of references) {
     for (const r of ref.references) {
-      try {
-        await db
+      statements.push(
+        db
           .prepare(
             `INSERT OR IGNORE INTO symbol_references
              (source_file, source_symbol, ref_file, ref_line, ref_context, session_id, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(ref.source_file, ref.source_symbol, r.file, r.line, r.context ?? null, sessionId, now)
-          .run();
-        stored++;
-      } catch {
-        skipped++;
-      }
+      );
     }
   }
 
-  return { stored, skipped };
+  if (statements.length === 0) {
+    return { stored: 0, skipped: 0 };
+  }
+
+  // Batch execute all inserts in a single transaction
+  try {
+    const results = await db.batch(statements);
+    const stored = results.reduce((acc, r) => acc + r.meta.changes, 0);
+    return { stored, skipped: statements.length - stored };
+  } catch (err) {
+    // Log error for debugging, return partial result
+    console.error('[storeReferences] Batch insert failed:', err);
+    return { stored: 0, skipped: statements.length };
+  }
 }
 
 export async function getReferencesForSymbol(
