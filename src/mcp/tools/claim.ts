@@ -3,7 +3,7 @@
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
-import type { ClaimScope, SessionConfig } from '../../db/types';
+import type { ClaimScope, SessionConfig, SymbolClaim } from '../../db/types';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types';
 import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession } from '../../db/queries';
 
@@ -11,7 +11,7 @@ export const claimTools: McpTool[] = [
   {
     name: 'collab_claim',
     description:
-      'Declare files you are about to modify. Other sessions will see a warning before modifying the same files.',
+      'Declare files or specific symbols (functions/classes) you are about to modify. Use symbols for fine-grained claims that allow other sessions to work on different parts of the same file.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -22,11 +22,32 @@ export const claimTools: McpTool[] = [
         files: {
           type: 'array',
           items: { type: 'string' },
-          description: "File paths to claim. Supports glob patterns like 'src/api/*'",
+          description: "File paths to claim. Supports glob patterns like 'src/api/*'. Use this for whole-file claims.",
+        },
+        symbols: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              file: { type: 'string', description: 'File path containing the symbols' },
+              symbols: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Symbol names (function, class, method names) to claim',
+              },
+              symbol_type: {
+                type: 'string',
+                enum: ['function', 'class', 'method', 'variable', 'block', 'other'],
+                description: 'Type of symbols being claimed (default: function)',
+              },
+            },
+            required: ['file', 'symbols'],
+          },
+          description: 'Symbol-level claims for fine-grained conflict detection. Use this instead of files when you only need to modify specific functions/classes.',
         },
         intent: {
           type: 'string',
-          description: 'What you plan to do with these files',
+          description: 'What you plan to do with these files/symbols',
         },
         scope: {
           type: 'string',
@@ -34,13 +55,13 @@ export const claimTools: McpTool[] = [
           description: 'Estimated scope: small(<30min), medium(30min-2hr), large(>2hr)',
         },
       },
-      required: ['session_id', 'files', 'intent'],
+      required: ['session_id', 'intent'],
     },
   },
   {
     name: 'collab_check',
     description:
-      'Check if files are being worked on by other sessions. ALWAYS call this before deleting or significantly modifying files.',
+      'Check if files or symbols are being worked on by other sessions. ALWAYS call this before modifying files. Supports symbol-level checking for fine-grained conflict detection.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -48,6 +69,22 @@ export const claimTools: McpTool[] = [
           type: 'array',
           items: { type: 'string' },
           description: 'File paths to check',
+        },
+        symbols: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              file: { type: 'string', description: 'File path containing the symbols' },
+              symbols: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Symbol names to check for conflicts',
+              },
+            },
+            required: ['file', 'symbols'],
+          },
+          description: 'Symbol-level check. If provided, only checks for conflicts with these specific symbols.',
         },
         session_id: {
           type: 'string',
@@ -121,6 +158,7 @@ export async function handleClaimTool(
     case 'collab_claim': {
       const sessionId = args.session_id as string | undefined;
       const files = args.files as string[] | undefined;
+      const symbols = args.symbols as SymbolClaim[] | undefined;
       const intent = args.intent as string | undefined;
       const scope = (args.scope as ClaimScope) ?? 'medium';
 
@@ -131,12 +169,18 @@ export async function handleClaimTool(
           true
         );
       }
-      if (!files || !Array.isArray(files) || files.length === 0) {
+
+      // Either files or symbols must be provided
+      const hasFiles = files && Array.isArray(files) && files.length > 0;
+      const hasSymbols = symbols && Array.isArray(symbols) && symbols.length > 0;
+
+      if (!hasFiles && !hasSymbols) {
         return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'files array cannot be empty' }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: 'Either files or symbols must be provided' }),
           true
         );
       }
+
       if (!intent || typeof intent !== 'string' || intent.trim() === '') {
         return createToolResult(
           JSON.stringify({ error: 'INVALID_INPUT', message: 'intent is required' }),
@@ -156,41 +200,56 @@ export async function handleClaimTool(
         );
       }
 
+      // Build file list from both files and symbols
+      const allFiles = new Set<string>(files ?? []);
+      if (hasSymbols) {
+        for (const sc of symbols!) {
+          allFiles.add(sc.file);
+        }
+      }
+      const fileList = Array.from(allFiles);
+
       // Check for conflicts before creating claim
-      const conflicts = await checkConflicts(db, files, sessionId);
+      const conflicts = await checkConflicts(db, fileList, sessionId, symbols);
 
       // Create the claim
       const { claim } = await createClaim(db, {
         session_id: sessionId,
-        files,
+        files: fileList,
         intent,
         scope,
+        symbols: hasSymbols ? symbols : undefined,
       });
 
       if (conflicts.length > 0) {
-        // Group conflicts by claim
-        const conflictsByClaim = new Map<string, typeof conflicts>();
-        for (const c of conflicts) {
-          const existing = conflictsByClaim.get(c.claim_id) ?? [];
-          existing.push(c);
-          conflictsByClaim.set(c.claim_id, existing);
-        }
+        // Group conflicts by type (file vs symbol)
+        const fileConflicts = conflicts.filter((c) => c.conflict_level === 'file');
+        const symbolConflicts = conflicts.filter((c) => c.conflict_level === 'symbol');
 
-        const conflictDetails = Array.from(conflictsByClaim.entries()).map(([claimId, items]) => ({
-          claim_id: claimId,
-          session_name: items[0].session_name,
-          intent: items[0].intent,
-          scope: items[0].scope,
-          overlapping_files: items.map((i) => i.file_path),
-        }));
+        const conflictDetails = {
+          file_level: fileConflicts.map((c) => ({
+            session_name: c.session_name,
+            file: c.file_path,
+            intent: c.intent,
+          })),
+          symbol_level: symbolConflicts.map((c) => ({
+            session_name: c.session_name,
+            file: c.file_path,
+            symbol: c.symbol_name,
+            symbol_type: c.symbol_type,
+            intent: c.intent,
+          })),
+        };
 
         return createToolResult(
           JSON.stringify(
             {
               claim_id: claim.id,
               status: 'created_with_conflicts',
+              files: fileList,
+              symbols: hasSymbols ? symbols : undefined,
               conflicts: conflictDetails,
-              warning: `⚠️ ${conflicts.length} file(s) overlap with other sessions. Please coordinate before proceeding.`,
+              warning: `⚠️ Conflicts detected: ${fileConflicts.length} file-level, ${symbolConflicts.length} symbol-level. Coordinate before proceeding.`,
             },
             null,
             2
@@ -202,16 +261,20 @@ export async function handleClaimTool(
         JSON.stringify({
           claim_id: claim.id,
           status: 'created',
-          files,
+          files: fileList,
+          symbols: hasSymbols ? symbols : undefined,
           intent,
           scope,
-          message: 'Claim created successfully. Other sessions will be warned about these files.',
+          message: hasSymbols
+            ? 'Symbol-level claim created. Other sessions can work on different symbols in the same file.'
+            : 'Claim created successfully. Other sessions will be warned about these files.',
         })
       );
     }
 
     case 'collab_check': {
       const files = args.files as string[] | undefined;
+      const symbols = args.symbols as SymbolClaim[] | undefined;
       const sessionId = args.session_id as string | undefined;
 
       // Input validation
@@ -246,21 +309,89 @@ export async function handleClaimTool(
         }
       }
 
-      const conflicts = await checkConflicts(db, files, sessionId);
+      const hasSymbols = symbols && Array.isArray(symbols) && symbols.length > 0;
+      const conflicts = await checkConflicts(db, files, sessionId, hasSymbols ? symbols : undefined);
+
+      // Separate file-level and symbol-level conflicts
+      const fileConflicts = conflicts.filter((c) => c.conflict_level === 'file');
+      const symbolConflicts = conflicts.filter((c) => c.conflict_level === 'symbol');
+
+      // Build per-file status (considering both file and symbol conflicts)
+      const blockedFiles = new Set<string>();
+      const blockedSymbols = new Map<string, Set<string>>(); // file -> symbols
+
+      for (const c of conflicts) {
+        if (c.conflict_level === 'file') {
+          blockedFiles.add(c.file_path);
+        } else if (c.conflict_level === 'symbol' && c.symbol_name) {
+          const existing = blockedSymbols.get(c.file_path) ?? new Set();
+          existing.add(c.symbol_name);
+          blockedSymbols.set(c.file_path, existing);
+        }
+      }
+
+      // For symbol-level check, determine safe symbols
+      let safeSymbols: Array<{ file: string; symbols: string[] }> = [];
+      let blockedSymbolsList: Array<{ file: string; symbols: string[] }> = [];
+
+      if (hasSymbols) {
+        for (const sc of symbols!) {
+          const blocked = blockedSymbols.get(sc.file) ?? new Set();
+          const safe = sc.symbols.filter((s) => !blocked.has(s));
+          const blockedList = sc.symbols.filter((s) => blocked.has(s));
+
+          if (safe.length > 0) {
+            safeSymbols.push({ file: sc.file, symbols: safe });
+          }
+          if (blockedList.length > 0) {
+            blockedSymbolsList.push({ file: sc.file, symbols: blockedList });
+          }
+        }
+      }
+
+      const safeFiles = files.filter((f) => !blockedFiles.has(f) && !blockedSymbols.has(f));
+      const blockedFilesList = files.filter((f) => blockedFiles.has(f));
+
+      // Determine recommendation for Claude's auto-decision
+      type Recommendation = 'proceed_all' | 'proceed_safe_only' | 'abort';
+      let recommendation: Recommendation;
+      let canEdit: boolean;
+
+      const hasSafeContent = safeFiles.length > 0 || safeSymbols.length > 0;
+
+      if (conflicts.length === 0) {
+        recommendation = 'proceed_all';
+        canEdit = true;
+      } else if (hasSafeContent) {
+        recommendation = 'proceed_safe_only';
+        canEdit = true;
+      } else {
+        recommendation = 'abort';
+        canEdit = false;
+      }
 
       if (conflicts.length === 0) {
         return createToolResult(
           JSON.stringify({
             has_conflicts: false,
             safe: true,
-            message: 'These files are not being worked on by other sessions.',
+            can_edit: true,
+            recommendation: 'proceed_all',
+            file_status: {
+              safe: files,
+              blocked: [],
+            },
+            symbol_status: hasSymbols ? { safe: symbols, blocked: [] } : undefined,
+            message: hasSymbols
+              ? 'All symbols are safe to edit. Proceed.'
+              : 'All files are safe to edit. Proceed.',
             has_in_progress_todo: hasInProgressTodo,
             todos_status: todosStatus,
           })
         );
       }
 
-      // Group by session for clearer output
+      // Group conflicts by session for clearer output
       const bySession = new Map<string, typeof conflicts>();
       for (const c of conflicts) {
         const key = c.session_id;
@@ -269,22 +400,60 @@ export async function handleClaimTool(
         bySession.set(key, existing);
       }
 
-      const conflictDetails = Array.from(bySession.entries()).map(([sessId, items]) => ({
-        session_id: sessId,
-        session_name: items[0].session_name,
-        intent: items[0].intent,
-        scope: items[0].scope,
-        files: items.map((i) => i.file_path),
-        started_at: items[0].created_at,
-      }));
+      const conflictDetails = Array.from(bySession.entries()).map(([sessId, items]) => {
+        const fileItems = items.filter((i) => i.conflict_level === 'file');
+        const symbolItems = items.filter((i) => i.conflict_level === 'symbol');
+
+        return {
+          session_id: sessId,
+          session_name: items[0].session_name,
+          intent: items[0].intent,
+          scope: items[0].scope,
+          files: fileItems.map((i) => i.file_path),
+          symbols: symbolItems.map((i) => ({
+            file: i.file_path,
+            symbol: i.symbol_name,
+            type: i.symbol_type,
+          })),
+          started_at: items[0].created_at,
+        };
+      });
+
+      // Build actionable message based on recommendation
+      let message: string;
+      if (recommendation === 'proceed_safe_only') {
+        if (hasSymbols && safeSymbols.length > 0) {
+          const safeDesc = safeSymbols.map((s) => `${s.file}:[${s.symbols.join(',')}]`).join(', ');
+          const blockedDesc = blockedSymbolsList.map((s) => `${s.file}:[${s.symbols.join(',')}]`).join(', ');
+          message = `Edit ONLY these safe symbols: ${safeDesc}. Skip blocked: ${blockedDesc}.`;
+        } else {
+          message = `Edit ONLY these safe files: [${safeFiles.join(', ')}]. Skip blocked files: [${blockedFilesList.join(', ')}].`;
+        }
+      } else {
+        message = hasSymbols
+          ? `All requested symbols are blocked. Coordinate with other session(s) or wait.`
+          : `All ${files.length} file(s) are blocked. Coordinate with other session(s) or wait.`;
+      }
 
       return createToolResult(
         JSON.stringify(
           {
             has_conflicts: true,
             safe: false,
+            can_edit: canEdit,
+            recommendation,
+            file_status: {
+              safe: safeFiles,
+              blocked: blockedFilesList,
+            },
+            symbol_status: hasSymbols
+              ? {
+                  safe: safeSymbols,
+                  blocked: blockedSymbolsList,
+                }
+              : undefined,
             conflicts: conflictDetails,
-            warning: `⚠️ ${conflicts.length} file(s) are being worked on by ${bySession.size} other session(s). Coordinate before modifying.`,
+            message,
             has_in_progress_todo: hasInProgressTodo,
             todos_status: todosStatus,
           },

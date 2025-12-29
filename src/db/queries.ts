@@ -14,6 +14,8 @@ import type {
   TodoItem,
   SessionProgress,
   SessionConfig,
+  SymbolClaim,
+  SymbolType,
 } from './types';
 
 // Helper to generate UUID v4
@@ -262,8 +264,9 @@ export async function createClaim(
     files: string[];
     intent: string;
     scope?: ClaimScope;
+    symbols?: SymbolClaim[];
   }
-): Promise<{ claim: Claim; files: string[] }> {
+): Promise<{ claim: Claim; files: string[]; symbols?: SymbolClaim[] }> {
   const id = generateId();
   const now = new Date().toISOString();
   const scope = params.scope ?? 'medium';
@@ -283,7 +286,23 @@ export async function createClaim(
       .bind(id, filePath, isPattern);
   });
 
-  await db.batch([claimStatement, ...fileStatements]);
+  // Add symbol claims if provided
+  const symbolStatements: ReturnType<typeof db.prepare>[] = [];
+  if (params.symbols && params.symbols.length > 0) {
+    for (const symbolClaim of params.symbols) {
+      for (const symbolName of symbolClaim.symbols) {
+        symbolStatements.push(
+          db
+            .prepare(
+              'INSERT INTO claim_symbols (claim_id, file_path, symbol_name, symbol_type, created_at) VALUES (?, ?, ?, ?, ?)'
+            )
+            .bind(id, symbolClaim.file, symbolName, symbolClaim.symbol_type ?? 'function', now)
+        );
+      }
+    }
+  }
+
+  await db.batch([claimStatement, ...fileStatements, ...symbolStatements]);
 
   return {
     claim: {
@@ -297,6 +316,7 @@ export async function createClaim(
       completed_summary: null,
     },
     files: params.files,
+    symbols: params.symbols,
   };
 }
 
@@ -384,47 +404,187 @@ export async function listClaims(
 export async function checkConflicts(
   db: DatabaseAdapter,
   files: string[],
-  excludeSessionId?: string
+  excludeSessionId?: string,
+  symbols?: SymbolClaim[]
 ): Promise<ConflictInfo[]> {
   const conflicts: ConflictInfo[] = [];
 
-  for (const filePath of files) {
-    // Check for exact matches or pattern overlaps
-    let query = `
-      SELECT
-        c.id as claim_id,
-        c.session_id,
-        s.name as session_name,
-        cf.file_path,
-        c.intent,
-        c.scope,
-        c.created_at
-      FROM claim_files cf
-      JOIN claims c ON cf.claim_id = c.id
-      JOIN sessions s ON c.session_id = s.id
-      WHERE c.status = 'active'
-        AND s.status = 'active'
-        AND (cf.file_path = ? OR (cf.is_pattern = 1 AND ? GLOB cf.file_path))
-    `;
-    const bindings: string[] = [filePath, filePath];
-
-    if (excludeSessionId) {
-      query += ' AND c.session_id != ?';
-      bindings.push(excludeSessionId);
+  // Build a map of file -> symbols for quick lookup
+  const symbolsByFile = new Map<string, Set<string>>();
+  if (symbols && symbols.length > 0) {
+    for (const sc of symbols) {
+      const existing = symbolsByFile.get(sc.file) ?? new Set();
+      for (const sym of sc.symbols) {
+        existing.add(sym);
+      }
+      symbolsByFile.set(sc.file, existing);
     }
-
-    const result = await db
-      .prepare(query)
-      .bind(...bindings)
-      .all<ConflictInfo>();
-
-    conflicts.push(...result.results);
   }
 
-  // Deduplicate by claim_id + file_path
+  for (const filePath of files) {
+    const requestedSymbols = symbolsByFile.get(filePath);
+
+    // First check if there are symbol-level claims for this file
+    if (requestedSymbols && requestedSymbols.size > 0) {
+      // Symbol-level conflict check
+      let symbolQuery = `
+        SELECT
+          c.id as claim_id,
+          c.session_id,
+          s.name as session_name,
+          cs.file_path,
+          c.intent,
+          c.scope,
+          c.created_at,
+          cs.symbol_name,
+          cs.symbol_type
+        FROM claim_symbols cs
+        JOIN claims c ON cs.claim_id = c.id
+        JOIN sessions s ON c.session_id = s.id
+        WHERE c.status = 'active'
+          AND s.status = 'active'
+          AND cs.file_path = ?
+          AND cs.symbol_name IN (${Array.from(requestedSymbols).map(() => '?').join(',')})
+      `;
+      const symbolBindings: string[] = [filePath, ...Array.from(requestedSymbols)];
+
+      if (excludeSessionId) {
+        symbolQuery += ' AND c.session_id != ?';
+        symbolBindings.push(excludeSessionId);
+      }
+
+      const symbolResult = await db
+        .prepare(symbolQuery)
+        .bind(...symbolBindings)
+        .all<ConflictInfo & { symbol_name: string; symbol_type: SymbolType }>();
+
+      for (const r of symbolResult.results) {
+        conflicts.push({
+          ...r,
+          conflict_level: 'symbol',
+        });
+      }
+
+      // Also check if there's a file-level claim (no symbols = whole file claimed)
+      let fileClaimQuery = `
+        SELECT
+          c.id as claim_id,
+          c.session_id,
+          s.name as session_name,
+          cf.file_path,
+          c.intent,
+          c.scope,
+          c.created_at
+        FROM claim_files cf
+        JOIN claims c ON cf.claim_id = c.id
+        JOIN sessions s ON c.session_id = s.id
+        WHERE c.status = 'active'
+          AND s.status = 'active'
+          AND (cf.file_path = ? OR (cf.is_pattern = 1 AND ? GLOB cf.file_path))
+          AND NOT EXISTS (
+            SELECT 1 FROM claim_symbols cs WHERE cs.claim_id = c.id AND cs.file_path = cf.file_path
+          )
+      `;
+      const fileClaimBindings: string[] = [filePath, filePath];
+
+      if (excludeSessionId) {
+        fileClaimQuery += ' AND c.session_id != ?';
+        fileClaimBindings.push(excludeSessionId);
+      }
+
+      const fileClaimResult = await db
+        .prepare(fileClaimQuery)
+        .bind(...fileClaimBindings)
+        .all<Omit<ConflictInfo, 'conflict_level'>>();
+
+      for (const r of fileClaimResult.results) {
+        conflicts.push({
+          ...r,
+          conflict_level: 'file',
+        });
+      }
+    } else {
+      // No symbols specified - check both file-level and symbol-level claims
+      // File-level claims (whole file)
+      let fileQuery = `
+        SELECT
+          c.id as claim_id,
+          c.session_id,
+          s.name as session_name,
+          cf.file_path,
+          c.intent,
+          c.scope,
+          c.created_at
+        FROM claim_files cf
+        JOIN claims c ON cf.claim_id = c.id
+        JOIN sessions s ON c.session_id = s.id
+        WHERE c.status = 'active'
+          AND s.status = 'active'
+          AND (cf.file_path = ? OR (cf.is_pattern = 1 AND ? GLOB cf.file_path))
+      `;
+      const fileBindings: string[] = [filePath, filePath];
+
+      if (excludeSessionId) {
+        fileQuery += ' AND c.session_id != ?';
+        fileBindings.push(excludeSessionId);
+      }
+
+      const fileResult = await db
+        .prepare(fileQuery)
+        .bind(...fileBindings)
+        .all<Omit<ConflictInfo, 'conflict_level'>>();
+
+      for (const r of fileResult.results) {
+        conflicts.push({
+          ...r,
+          conflict_level: 'file',
+        });
+      }
+
+      // Symbol-level claims on this file
+      let symbolOnlyQuery = `
+        SELECT DISTINCT
+          c.id as claim_id,
+          c.session_id,
+          s.name as session_name,
+          cs.file_path,
+          c.intent,
+          c.scope,
+          c.created_at,
+          cs.symbol_name,
+          cs.symbol_type
+        FROM claim_symbols cs
+        JOIN claims c ON cs.claim_id = c.id
+        JOIN sessions s ON c.session_id = s.id
+        WHERE c.status = 'active'
+          AND s.status = 'active'
+          AND cs.file_path = ?
+      `;
+      const symbolOnlyBindings: string[] = [filePath];
+
+      if (excludeSessionId) {
+        symbolOnlyQuery += ' AND c.session_id != ?';
+        symbolOnlyBindings.push(excludeSessionId);
+      }
+
+      const symbolOnlyResult = await db
+        .prepare(symbolOnlyQuery)
+        .bind(...symbolOnlyBindings)
+        .all<ConflictInfo & { symbol_name: string; symbol_type: SymbolType }>();
+
+      for (const r of symbolOnlyResult.results) {
+        conflicts.push({
+          ...r,
+          conflict_level: 'symbol',
+        });
+      }
+    }
+  }
+
+  // Deduplicate by claim_id + file_path + symbol_name
   const seen = new Set<string>();
   return conflicts.filter((c) => {
-    const key = `${c.claim_id}:${c.file_path}`;
+    const key = `${c.claim_id}:${c.file_path}:${c.symbol_name ?? ''}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

@@ -19,6 +19,7 @@ function loadMigrations(): string[] {
     readFileSync(join(migrationsDir, '0001_init.sql'), 'utf-8'),
     readFileSync(join(migrationsDir, '0002_auth.sql'), 'utf-8'),
     readFileSync(join(migrationsDir, '0003_config.sql'), 'utf-8'),
+    readFileSync(join(migrationsDir, '0004_symbols.sql'), 'utf-8'),
   ];
 }
 

@@ -19,6 +19,7 @@ import { sessionTools, handleSessionTool } from './tools/session';
 import { claimTools, handleClaimTool } from './tools/claim';
 import { messageTools, handleMessageTool } from './tools/message';
 import { decisionTools, handleDecisionTool } from './tools/decision';
+import { lspTools, handleLspTool } from './tools/lsp';
 import type { AuthContext } from '../auth/types';
 import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from '../constants.js';
 
@@ -32,7 +33,7 @@ const CAPABILITIES: McpCapabilities = {
 };
 
 // Combine all tools
-const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools];
+const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools, ...lspTools];
 
 export class McpServer {
   private authContext?: AuthContext;
@@ -105,6 +106,8 @@ export class McpServer {
         result = await handleMessageTool(this.db, name, args);
       } else if (name.startsWith('collab_decision_')) {
         result = await handleDecisionTool(this.db, name, args);
+      } else if (name === 'collab_analyze_symbols' || name === 'collab_validate_symbols') {
+        result = await handleLspTool(this.db, name, args);
       } else {
         result = createToolResult(`Unknown tool: ${name}`, true);
       }
@@ -148,6 +151,8 @@ export async function handleMcpRequest(
       return await handleMessageTool(db, name, args);
     } else if (name.startsWith('collab_decision_')) {
       return await handleDecisionTool(db, name, args);
+    } else if (name === 'collab_analyze_symbols' || name === 'collab_validate_symbols') {
+      return await handleLspTool(db, name, args);
     } else {
       return createToolResult(`Unknown tool: ${name}`, true);
     }

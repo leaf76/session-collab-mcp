@@ -32,44 +32,130 @@ This MCP server coordinates multiple Claude Code sessions working on the same co
 
 2. **Before editing any file**: Call \`collab_check\` with the file path to verify no conflicts
 
-3. **If conflicts detected** (DEFAULT: coordinate):
-   - Show warning to user with options:
-     a) **Coordinate** (default): Send message to other session via \`collab_message_send\`, wait for response
-     b) **Bypass**: Proceed anyway (warn about potential conflicts)
-     c) **Request release**: Ask owner to release if claim seems stale
-   - NEVER auto-release another session's claim without explicit user permission
+3. **Follow the \`recommendation\` from collab_check automatically**:
+   - \`proceed_all\`: All files/symbols safe. Edit them without asking user.
+   - \`proceed_safe_only\`: Some content blocked. Edit ONLY safe files/symbols, skip blocked. No need to ask user.
+   - \`abort\`: All content blocked. Inform user and suggest coordination.
 
-4. **For significant changes**: Call \`collab_claim\` before starting work on files
+4. **For significant changes**: Call \`collab_claim\` before starting work
 
-5. **When done with files**: Call \`collab_release\` with YOUR session_id to free them
+5. **When done**: Call \`collab_release\` with YOUR session_id to free them
 
 6. **On conversation end**: Call \`collab_session_end\` to clean up
+
+## Symbol-Level Claims (Fine-Grained)
+
+Use symbol-level claims when modifying specific functions/classes, allowing other sessions to work on different parts of the same file.
+
+**Claim specific symbols:**
+\`\`\`json
+{
+  "symbols": [
+    { "file": "src/auth.ts", "symbols": ["validateToken", "refreshToken"] }
+  ],
+  "intent": "Refactoring token validation"
+}
+\`\`\`
+
+**Check specific symbols:**
+\`\`\`json
+{
+  "files": ["src/auth.ts"],
+  "symbols": [
+    { "file": "src/auth.ts", "symbols": ["validateToken"] }
+  ]
+}
+\`\`\`
+
+**Conflict levels:**
+- \`file\`: Whole file is claimed (no symbols specified)
+- \`symbol\`: Only specific functions/classes are claimed
+
+**Example scenario:**
+- Session A claims \`validateToken\` in auth.ts
+- Session B wants to modify \`refreshToken\` in auth.ts
+- → No conflict! Session B can proceed.
+
+## Auto-Decision Rules
+
+When \`collab_check\` returns:
+- \`can_edit: true\` → Proceed with safe content automatically
+- \`can_edit: false\` → Stop and inform user about blocked content
+
+For symbol-level checks, use \`symbol_status.safe\` and \`symbol_status.blocked\`.
 
 ## Permission Rules
 
 - You can ONLY release claims that belong to YOUR session
 - To release another session's claim, you must ask the user and they must explicitly confirm
 - Use \`force=true\` in \`collab_release\` only after user explicitly confirms
-- When user chooses "coordinate", send a message first and suggest waiting
 
 ## Conflict Handling Modes
 
 Configure your session behavior with \`collab_config\`:
 
 - **"strict"**: Always ask user, never bypass or auto-release
-- **"smart"** (default): Ask user, but suggest auto-release for stale claims (>2hr old)
+- **"smart"** (default): Auto-proceed with safe content, ask for blocked
 - **"bypass"**: Proceed despite conflicts (just warn, don't block)
 
-Config options:
-- \`mode\`: strict | smart | bypass
-- \`allow_release_others\`: Allow releasing other sessions' claims (default: false)
-- \`auto_release_stale\`: Auto-release stale claims (default: false)
-- \`stale_threshold_hours\`: Hours before claim is stale (default: 2)
+## LSP Integration (Advanced)
+
+For precise symbol validation and impact analysis, use LSP tools:
+
+### Workflow with LSP
+
+1. **Get symbols from LSP**: Use \`LSP.documentSymbol\` to get actual symbols in a file
+2. **Validate before claiming**: Use \`collab_validate_symbols\` to verify symbol names
+3. **Analyze conflicts with context**: Use \`collab_analyze_symbols\` for enhanced conflict detection
+
+### collab_validate_symbols
+
+Validate symbol names exist before claiming:
+
+\`\`\`
+1. Claude: LSP.documentSymbol("src/auth.ts")
+2. Claude: collab_validate_symbols({
+     file: "src/auth.ts",
+     symbols: ["validateToken", "refreshTokne"],  // typo!
+     lsp_symbols: [/* LSP output */]
+   })
+3. Response: { invalid_symbols: ["refreshTokne"], suggestions: { "refreshTokne": ["refreshToken"] } }
+\`\`\`
+
+### collab_analyze_symbols
+
+Enhanced conflict detection with LSP data:
+
+\`\`\`
+1. Claude: LSP.documentSymbol("src/auth.ts")
+2. Claude: LSP.findReferences("validateToken")
+3. Claude: collab_analyze_symbols({
+     session_id: "...",
+     files: [{ file: "src/auth.ts", symbols: [/* LSP symbols */] }],
+     references: [{ symbol: "validateToken", file: "src/auth.ts", references: [...] }]
+   })
+4. Response: {
+     can_edit: true,
+     recommendation: "proceed_safe_only",
+     symbols: [
+       { name: "validateToken", conflict_status: "blocked", impact: { references_count: 5, affected_files: [...] } },
+       { name: "refreshToken", conflict_status: "safe" }
+     ]
+   }
+\`\`\`
+
+### Benefits of LSP Integration
+
+- **Accurate symbol names**: No typos in claims
+- **Impact awareness**: Know which files will be affected by changes
+- **Smart prioritization**: Focus on low-impact changes first
 
 ## Best Practices
 
-- Claim files early, release when done
-- Use descriptive intents when claiming (e.g., "Refactoring auth module")
-- Check for messages periodically with \`collab_message_list\`
-- Record architectural decisions with \`collab_decision_add\`
+- **Prefer symbol-level claims** for focused changes (single function/class)
+- **Use file-level claims** for large refactors affecting many symbols
+- **Use LSP validation** when unsure about symbol names
+- **Check references** before modifying widely-used symbols
+- Claim early, release when done
+- Use descriptive intents (e.g., "Refactoring validateToken for JWT support")
 `.trim();

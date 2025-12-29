@@ -120,6 +120,25 @@ export interface ClaimFile {
   is_pattern: number; // 0 or 1, SQLite boolean
 }
 
+// Symbol types for fine-grained conflict detection
+export type SymbolType = 'function' | 'class' | 'method' | 'variable' | 'block' | 'other';
+
+export interface ClaimSymbol {
+  id: number;
+  claim_id: string;
+  file_path: string;
+  symbol_name: string;
+  symbol_type: SymbolType;
+  created_at: string;
+}
+
+// Input format for claiming symbols
+export interface SymbolClaim {
+  file: string;
+  symbols: string[];
+  symbol_type?: SymbolType;
+}
+
 export interface Message {
   id: string;
   from_session_id: string;
@@ -152,4 +171,8 @@ export interface ConflictInfo {
   intent: string;
   scope: ClaimScope;
   created_at: string;
+  // Symbol-level conflict info (optional)
+  symbol_name?: string;
+  symbol_type?: SymbolType;
+  conflict_level: 'file' | 'symbol';
 }
