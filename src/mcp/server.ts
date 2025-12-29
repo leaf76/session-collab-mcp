@@ -94,7 +94,7 @@ export class McpServer {
 
     try {
       // Route to appropriate handler
-      if (name.startsWith('collab_session_')) {
+      if (name.startsWith('collab_session_') || name === 'collab_status_update') {
         result = await handleSessionTool(this.db, name, args, userId);
       } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
         result = await handleClaimTool(this.db, name, args);
