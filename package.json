@@ -1,6 +1,6 @@
 {
   "name": "session-collab-mcp",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "MCP server for Claude Code session collaboration - prevents conflicts between parallel sessions",
   "license": "MIT",
   "keywords": [
@@ -13,7 +13,7 @@
   ],
   "type": "module",
   "bin": {
-    "session-collab-mcp": "./bin/session-collab-mcp"
+    "session-collab-mcp": "./dist/cli.js"
   },
   "files": [
     "bin",
