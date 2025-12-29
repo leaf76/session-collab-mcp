@@ -321,18 +321,36 @@ export async function createClaim(
 }
 
 export async function getClaim(db: DatabaseAdapter, id: string): Promise<ClaimWithFiles | null> {
-  const claim = await db.prepare('SELECT * FROM claims WHERE id = ?').bind(id).first<Claim>();
+  // Single query with JOIN to avoid N+1 problem
+  const result = await db
+    .prepare(
+      `SELECT
+        c.id, c.session_id, c.intent, c.scope, c.status,
+        c.created_at, c.updated_at, c.completed_summary,
+        s.name as session_name,
+        GROUP_CONCAT(cf.file_path, '|||') as file_paths
+      FROM claims c
+      LEFT JOIN sessions s ON c.session_id = s.id
+      LEFT JOIN claim_files cf ON c.id = cf.claim_id
+      WHERE c.id = ?
+      GROUP BY c.id`
+    )
+    .bind(id)
+    .first<Claim & { session_name: string | null; file_paths: string | null }>();
 
-  if (!claim) return null;
-
-  const files = await db.prepare('SELECT file_path FROM claim_files WHERE claim_id = ?').bind(id).all<{ file_path: string }>();
-
-  const session = await db.prepare('SELECT name FROM sessions WHERE id = ?').bind(claim.session_id).first<{ name: string | null }>();
+  if (!result) return null;
 
   return {
-    ...claim,
-    files: files.results.map((f) => f.file_path),
-    session_name: session?.name ?? null,
+    id: result.id,
+    session_id: result.session_id,
+    intent: result.intent,
+    scope: result.scope,
+    status: result.status,
+    created_at: result.created_at,
+    updated_at: result.updated_at,
+    completed_summary: result.completed_summary,
+    files: result.file_paths ? result.file_paths.split('|||') : [],
+    session_name: result.session_name,
   };
 }
 

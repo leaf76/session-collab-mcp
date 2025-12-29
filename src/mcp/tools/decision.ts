@@ -3,8 +3,8 @@
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
-import type { DecisionCategory } from '../../db/types';
 import { addDecision, listDecisions, getSession } from '../../db/queries';
+import { validateInput, decisionAddSchema, decisionListSchema } from '../schemas';
 
 export const decisionTools: McpTool[] = [
   {
@@ -61,13 +61,17 @@ export async function handleDecisionTool(
 ): Promise<McpToolResult> {
   switch (name) {
     case 'collab_decision_add': {
-      const sessionId = args.session_id as string;
-      const category = args.category as DecisionCategory | undefined;
-      const title = args.title as string;
-      const description = args.description as string;
+      const validation = validateInput(decisionAddSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
 
       // Verify session
-      const session = await getSession(db, sessionId);
+      const session = await getSession(db, input.session_id);
       if (!session || session.status !== 'active') {
         return createToolResult(
           JSON.stringify({
@@ -79,10 +83,10 @@ export async function handleDecisionTool(
       }
 
       const decision = await addDecision(db, {
-        session_id: sessionId,
-        category,
-        title,
-        description,
+        session_id: input.session_id,
+        category: input.category,
+        title: input.title,
+        description: input.description,
       });
 
       return createToolResult(
@@ -95,10 +99,19 @@ export async function handleDecisionTool(
     }
 
     case 'collab_decision_list': {
-      const category = args.category as DecisionCategory | undefined;
-      const limit = (args.limit as number) ?? 20;
+      const validation = validateInput(decisionListSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
 
-      const decisions = await listDecisions(db, { category, limit });
+      const decisions = await listDecisions(db, {
+        category: input.category,
+        limit: input.limit ?? 20,
+      });
 
       return createToolResult(
         JSON.stringify(

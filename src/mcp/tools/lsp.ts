@@ -3,8 +3,15 @@
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
-import type { SymbolType, ConflictInfo, ReferenceInput } from '../../db/types';
+import type { SymbolType, ConflictInfo } from '../../db/types';
 import { storeReferences, analyzeClaimImpact, clearSessionReferences } from '../../db/queries';
+import {
+  validateInput,
+  analyzeSymbolsSchema,
+  validateSymbolsSchema,
+  storeReferencesSchema,
+  impactAnalysisSchema,
+} from '../schemas';
 
 // LSP Symbol Kind mapping (from LSP spec)
 const LSP_SYMBOL_KIND_MAP: Record<number, SymbolType> = {
@@ -305,24 +312,17 @@ export async function handleLspTool(
 ): Promise<McpToolResult> {
   switch (name) {
     case 'collab_analyze_symbols': {
-      const sessionId = args.session_id as string;
-      const files = args.files as FileSymbolInput[] | undefined;
-      const references = args.references as SymbolReference[] | undefined;
-      const checkSymbols = args.check_symbols as string[] | undefined;
-
-      if (!sessionId) {
+      const validation = validateInput(analyzeSymbolsSchema, args);
+      if (!validation.success) {
         return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'session_id is required' }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
           true
         );
       }
-
-      if (!files || !Array.isArray(files) || files.length === 0) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'files array is required' }),
-          true
-        );
-      }
+      const input = validation.data;
+      const files = input.files as FileSymbolInput[];
+      const references = input.references as SymbolReference[] | undefined;
+      const checkSymbols = input.check_symbols;
 
       // Build reference lookup map if provided
       const referenceMap = new Map<string, SymbolReference>();
@@ -352,10 +352,10 @@ export async function handleLspTool(
       const symbolNames = [...new Set(symbolsToAnalyze.map((s) => s.name))];
 
       // Check for symbol-level claims
-      const symbolConflicts = await querySymbolConflicts(db, fileList, symbolNames, sessionId);
+      const symbolConflicts = await querySymbolConflicts(db, fileList, symbolNames, input.session_id);
 
       // Check for file-level claims
-      const fileConflicts = await queryFileConflicts(db, fileList, sessionId);
+      const fileConflicts = await queryFileConflicts(db, fileList, input.session_id);
 
       // Build result with conflict status for each symbol
       const analyzedSymbols: AnalyzedSymbol[] = [];
@@ -455,23 +455,18 @@ export async function handleLspTool(
     }
 
     case 'collab_validate_symbols': {
-      const file = args.file as string;
-      const symbols = args.symbols as string[];
-      const lspSymbols = args.lsp_symbols as Array<{ name: string; kind: number }>;
-
-      if (!file || !symbols || !lspSymbols) {
+      const validation = validateInput(validateSymbolsSchema, args);
+      if (!validation.success) {
         return createToolResult(
-          JSON.stringify({
-            error: 'INVALID_INPUT',
-            message: 'file, symbols, and lsp_symbols are required',
-          }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
           true
         );
       }
+      const input = validation.data;
 
       // Build set of available symbol names from LSP data
       const availableSymbols = new Set<string>();
-      for (const lspSym of lspSymbols) {
+      for (const lspSym of input.lsp_symbols) {
         availableSymbols.add(lspSym.name);
       }
 
@@ -480,7 +475,7 @@ export async function handleLspTool(
       const invalid: string[] = [];
       const suggestions: Record<string, string[]> = {};
 
-      for (const sym of symbols) {
+      for (const sym of input.symbols) {
         if (availableSymbols.has(sym)) {
           valid.push(sym);
         } else {
@@ -502,7 +497,7 @@ export async function handleLspTool(
       return createToolResult(
         JSON.stringify({
           valid: allValid,
-          file,
+          file: input.file,
           valid_symbols: valid,
           invalid_symbols: invalid,
           suggestions: Object.keys(suggestions).length > 0 ? suggestions : undefined,
@@ -515,32 +510,23 @@ export async function handleLspTool(
     }
 
     case 'collab_store_references': {
-      const sessionId = args.session_id as string;
-      const references = args.references as ReferenceInput[];
-      const clearExisting = args.clear_existing as boolean | undefined;
-
-      if (!sessionId) {
+      const validation = validateInput(storeReferencesSchema, args);
+      if (!validation.success) {
         return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'session_id is required' }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
           true
         );
       }
-
-      if (!references || !Array.isArray(references)) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'references array is required' }),
-          true
-        );
-      }
+      const input = validation.data;
 
       // Clear existing references if requested
       let cleared = 0;
-      if (clearExisting) {
-        cleared = await clearSessionReferences(db, sessionId);
+      if (input.clear_existing) {
+        cleared = await clearSessionReferences(db, input.session_id);
       }
 
       // Store new references
-      const result = await storeReferences(db, sessionId, references);
+      const result = await storeReferences(db, input.session_id, input.references);
 
       return createToolResult(
         JSON.stringify({
@@ -554,21 +540,16 @@ export async function handleLspTool(
     }
 
     case 'collab_impact_analysis': {
-      const sessionId = args.session_id as string;
-      const file = args.file as string;
-      const symbol = args.symbol as string;
-
-      if (!sessionId || !file || !symbol) {
+      const validation = validateInput(impactAnalysisSchema, args);
+      if (!validation.success) {
         return createToolResult(
-          JSON.stringify({
-            error: 'INVALID_INPUT',
-            message: 'session_id, file, and symbol are required',
-          }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
           true
         );
       }
+      const input = validation.data;
 
-      const impact = await analyzeClaimImpact(db, file, symbol, sessionId);
+      const impact = await analyzeClaimImpact(db, input.file, input.symbol, input.session_id);
 
       // Determine risk level
       let riskLevel: 'low' | 'medium' | 'high';

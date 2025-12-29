@@ -14,8 +14,17 @@ import {
   cleanupStaleSessions,
   listClaims,
 } from '../../db/queries';
-import type { TodoItem, SessionConfig, ConflictMode } from '../../db/types';
+import type { TodoItem, SessionConfig } from '../../db/types';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types';
+import {
+  validateInput,
+  sessionStartSchema,
+  sessionEndSchema,
+  sessionListSchema,
+  sessionHeartbeatSchema,
+  statusUpdateSchema,
+  configSchema,
+} from '../schemas';
 
 export const sessionTools: McpTool[] = [
   {
@@ -177,17 +186,26 @@ export async function handleSessionTool(
 ): Promise<McpToolResult> {
   switch (name) {
     case 'collab_session_start': {
+      const validation = validateInput(sessionStartSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
+
       // Cleanup stale sessions first
       await cleanupStaleSessions(db, 30);
 
       const session = await createSession(db, {
-        name: args.name as string | undefined,
-        project_root: args.project_root as string,
-        machine_id: args.machine_id as string | undefined,
+        name: input.name,
+        project_root: input.project_root,
+        machine_id: input.machine_id,
         user_id: userId,
       });
 
-      const activeSessions = await listSessions(db, { project_root: args.project_root as string, user_id: userId });
+      const activeSessions = await listSessions(db, { project_root: input.project_root, user_id: userId });
 
       return createToolResult(
         JSON.stringify(
@@ -208,10 +226,16 @@ export async function handleSessionTool(
     }
 
     case 'collab_session_end': {
-      const sessionId = args.session_id as string;
-      const releaseClaims = (args.release_claims as 'complete' | 'abandon') ?? 'abandon';
+      const validation = validateInput(sessionEndSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
 
-      const session = await getSession(db, sessionId);
+      const session = await getSession(db, input.session_id);
       if (!session) {
         return createToolResult(
           JSON.stringify({ error: 'SESSION_NOT_FOUND', message: 'Session not found' }),
@@ -219,21 +243,30 @@ export async function handleSessionTool(
         );
       }
 
-      await endSession(db, sessionId, releaseClaims);
+      await endSession(db, input.session_id, input.release_claims);
 
       return createToolResult(
         JSON.stringify({
           success: true,
-          message: `Session ended. All claims marked as ${releaseClaims === 'complete' ? 'completed' : 'abandoned'}.`,
+          message: `Session ended. All claims marked as ${input.release_claims === 'complete' ? 'completed' : 'abandoned'}.`,
         })
       );
     }
 
     case 'collab_session_list': {
+      const validation = validateInput(sessionListSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
+
       // Do not filter by user_id - collaboration tool should show all sessions
       const sessions = await listSessions(db, {
-        include_inactive: args.include_inactive as boolean,
-        project_root: args.project_root as string | undefined,
+        include_inactive: input.include_inactive,
+        project_root: input.project_root,
       });
 
       // Get active claims count for each session and include status info
@@ -278,13 +311,18 @@ export async function handleSessionTool(
     }
 
     case 'collab_session_heartbeat': {
-      const sessionId = args.session_id as string;
-      const currentTask = args.current_task as string | undefined;
-      const todos = args.todos as TodoItem[] | undefined;
+      const validation = validateInput(sessionHeartbeatSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
 
-      const updated = await updateSessionHeartbeat(db, sessionId, {
-        current_task: currentTask,
-        todos,
+      const updated = await updateSessionHeartbeat(db, input.session_id, {
+        current_task: input.current_task,
+        todos: input.todos as TodoItem[] | undefined,
       });
 
       if (!updated) {
@@ -301,18 +339,24 @@ export async function handleSessionTool(
         JSON.stringify({
           success: true,
           message: 'Heartbeat updated',
-          status_synced: !!(currentTask || todos),
+          status_synced: !!(input.current_task || input.todos),
         })
       );
     }
 
     case 'collab_status_update': {
-      const sessionId = args.session_id as string;
-      const currentTask = args.current_task as string | undefined;
-      const todos = args.todos as TodoItem[] | undefined;
+      const validation = validateInput(statusUpdateSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
+      const todos = input.todos as TodoItem[] | undefined;
 
       // Validate session exists
-      const session = await getSession(db, sessionId);
+      const session = await getSession(db, input.session_id);
       if (!session || session.status !== 'active') {
         return createToolResult(
           JSON.stringify({
@@ -323,8 +367,8 @@ export async function handleSessionTool(
         );
       }
 
-      await updateSessionStatus(db, sessionId, {
-        current_task: currentTask,
+      await updateSessionStatus(db, input.session_id, {
+        current_task: input.current_task,
         todos,
       });
 
@@ -343,28 +387,24 @@ export async function handleSessionTool(
         JSON.stringify({
           success: true,
           message: 'Status updated successfully.',
-          current_task: currentTask ?? null,
+          current_task: input.current_task ?? null,
           progress,
         })
       );
     }
 
     case 'collab_config': {
-      const sessionId = args.session_id as string;
-
-      // Validate session_id input
-      if (!sessionId || typeof sessionId !== 'string') {
+      const validation = validateInput(configSchema, args);
+      if (!validation.success) {
         return createToolResult(
-          JSON.stringify({
-            error: 'INVALID_INPUT',
-            message: 'session_id is required',
-          }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
           true
         );
       }
+      const input = validation.data;
 
       // Validate session exists
-      const session = await getSession(db, sessionId);
+      const session = await getSession(db, input.session_id);
       if (!session || session.status !== 'active') {
         return createToolResult(
           JSON.stringify({
@@ -387,17 +427,17 @@ export async function handleSessionTool(
 
       // Update with new values
       const newConfig: SessionConfig = {
-        mode: (args.mode as ConflictMode) ?? currentConfig.mode,
-        allow_release_others: args.allow_release_others !== undefined
-          ? (args.allow_release_others as boolean)
+        mode: input.mode ?? currentConfig.mode,
+        allow_release_others: input.allow_release_others !== undefined
+          ? input.allow_release_others
           : currentConfig.allow_release_others,
-        auto_release_stale: args.auto_release_stale !== undefined
-          ? (args.auto_release_stale as boolean)
+        auto_release_stale: input.auto_release_stale !== undefined
+          ? input.auto_release_stale
           : currentConfig.auto_release_stale,
-        stale_threshold_hours: (args.stale_threshold_hours as number) ?? currentConfig.stale_threshold_hours,
+        stale_threshold_hours: input.stale_threshold_hours ?? currentConfig.stale_threshold_hours,
       };
 
-      await updateSessionConfig(db, sessionId, newConfig);
+      await updateSessionConfig(db, input.session_id, newConfig);
 
       return createToolResult(
         JSON.stringify({

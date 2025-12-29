@@ -39,8 +39,7 @@ class SqlitePreparedStatement implements PreparedStatement {
 
   constructor(
     private db: Database.Database,
-    private sql: string,
-    private onWrite?: () => void
+    private sql: string
   ) {}
 
   bind(...values: unknown[]): PreparedStatement {
@@ -66,8 +65,8 @@ class SqlitePreparedStatement implements PreparedStatement {
   async run(): Promise<{ meta: { changes: number } }> {
     const stmt = this.db.prepare(this.sql);
     const result = stmt.run(...this.bindings);
-    // Trigger checkpoint after write
-    this.onWrite?.();
+    // Note: wal_autocheckpoint handles periodic checkpoints automatically
+    // No need to checkpoint after every write - reduces I/O overhead
     return {
       meta: { changes: result.changes },
     };
@@ -104,12 +103,13 @@ class SqliteDatabase implements DatabaseAdapter {
   }
 
   // Force checkpoint to make changes visible to other processes
+  // Only called after batch operations, not after individual writes
   checkpoint(): void {
     this.db.pragma('wal_checkpoint(PASSIVE)');
   }
 
   prepare(sql: string): PreparedStatement {
-    return new SqlitePreparedStatement(this.db, sql, () => this.checkpoint());
+    return new SqlitePreparedStatement(this.db, sql);
   }
 
   async batch(statements: PreparedStatement[]): Promise<QueryResult<unknown>[]> {
@@ -124,7 +124,7 @@ class SqliteDatabase implements DatabaseAdapter {
       });
     });
     const results = transaction();
-    // Checkpoint after batch write
+    // Checkpoint after batch write to ensure visibility to other processes
     this.checkpoint();
     return results;
   }

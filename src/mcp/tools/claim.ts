@@ -3,9 +3,10 @@
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
-import type { ClaimScope, SessionConfig, SymbolClaim } from '../../db/types';
+import type { SessionConfig } from '../../db/types';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types';
 import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession } from '../../db/queries';
+import { claimCreateSchema, claimCheckSchema, claimReleaseSchema, claimListSchema, validateInput } from '../schemas.js';
 
 export const claimTools: McpTool[] = [
   {
@@ -156,37 +157,17 @@ export async function handleClaimTool(
 ): Promise<McpToolResult> {
   switch (name) {
     case 'collab_claim': {
-      const sessionId = args.session_id as string | undefined;
-      const files = args.files as string[] | undefined;
-      const symbols = args.symbols as SymbolClaim[] | undefined;
-      const intent = args.intent as string | undefined;
-      const scope = (args.scope as ClaimScope) ?? 'medium';
-
-      // Input validation
-      if (!sessionId || typeof sessionId !== 'string') {
+      // Validate input with Zod schema
+      const validation = validateInput(claimCreateSchema, args);
+      if (!validation.success) {
         return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'session_id is required' }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
           true
         );
       }
 
-      // Either files or symbols must be provided
-      const hasFiles = files && Array.isArray(files) && files.length > 0;
-      const hasSymbols = symbols && Array.isArray(symbols) && symbols.length > 0;
-
-      if (!hasFiles && !hasSymbols) {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'Either files or symbols must be provided' }),
-          true
-        );
-      }
-
-      if (!intent || typeof intent !== 'string' || intent.trim() === '') {
-        return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'intent is required' }),
-          true
-        );
-      }
+      const { session_id: sessionId, files, symbols, intent, scope = 'medium' } = validation.data;
+      const hasSymbols = symbols && symbols.length > 0;
 
       // Verify session exists and is active
       const session = await getSession(db, sessionId);
@@ -209,10 +190,8 @@ export async function handleClaimTool(
       }
       const fileList = Array.from(allFiles);
 
-      // Check for conflicts before creating claim
-      const conflicts = await checkConflicts(db, fileList, sessionId, symbols);
-
-      // Create the claim
+      // Create the claim FIRST (atomic operation)
+      // This ensures our claim is registered before checking conflicts
       const { claim } = await createClaim(db, {
         session_id: sessionId,
         files: fileList,
@@ -220,6 +199,11 @@ export async function handleClaimTool(
         scope,
         symbols: hasSymbols ? symbols : undefined,
       });
+
+      // Check for conflicts AFTER creating claim
+      // This eliminates race condition: if two sessions claim simultaneously,
+      // both will see each other's claims and can coordinate
+      const conflicts = await checkConflicts(db, fileList, sessionId, symbols);
 
       if (conflicts.length > 0) {
         // Group conflicts by type (file vs symbol)
@@ -273,17 +257,16 @@ export async function handleClaimTool(
     }
 
     case 'collab_check': {
-      const files = args.files as string[] | undefined;
-      const symbols = args.symbols as SymbolClaim[] | undefined;
-      const sessionId = args.session_id as string | undefined;
-
-      // Input validation
-      if (!files || !Array.isArray(files) || files.length === 0) {
+      // Validate input with Zod schema
+      const validation = validateInput(claimCheckSchema, args);
+      if (!validation.success) {
         return createToolResult(
-          JSON.stringify({ error: 'INVALID_INPUT', message: 'files array cannot be empty' }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
           true
         );
       }
+
+      const { files, symbols, session_id: sessionId } = validation.data;
 
       // Check todos status if session_id provided
       let hasInProgressTodo = false;
@@ -311,10 +294,6 @@ export async function handleClaimTool(
 
       const hasSymbols = symbols && Array.isArray(symbols) && symbols.length > 0;
       const conflicts = await checkConflicts(db, files, sessionId, hasSymbols ? symbols : undefined);
-
-      // Separate file-level and symbol-level conflicts
-      const fileConflicts = conflicts.filter((c) => c.conflict_level === 'file');
-      const symbolConflicts = conflicts.filter((c) => c.conflict_level === 'symbol');
 
       // Build per-file status (considering both file and symbol conflicts)
       const blockedFiles = new Set<string>();
@@ -464,22 +443,16 @@ export async function handleClaimTool(
     }
 
     case 'collab_release': {
-      const sessionId = args.session_id as string;
-      const claimId = args.claim_id as string;
-      const status = args.status as 'completed' | 'abandoned';
-      const summary = args.summary as string | undefined;
-      const force = args.force as boolean | undefined;
-
-      // Validate session_id
-      if (!sessionId || typeof sessionId !== 'string') {
+      // Validate input with Zod schema
+      const validation = validateInput(claimReleaseSchema, args);
+      if (!validation.success) {
         return createToolResult(
-          JSON.stringify({
-            error: 'INVALID_INPUT',
-            message: 'session_id is required to verify ownership',
-          }),
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
           true
         );
       }
+
+      const { session_id: sessionId, claim_id: claimId, status, summary, force } = validation.data;
 
       const claim = await getClaim(db, claimId);
       if (!claim) {
@@ -559,11 +532,17 @@ export async function handleClaimTool(
     }
 
     case 'collab_claims_list': {
-      const claims = await listClaims(db, {
-        session_id: args.session_id as string | undefined,
-        status: (args.status as 'active' | 'completed' | 'abandoned' | 'all') ?? 'active',
-        project_root: args.project_root as string | undefined,
-      });
+      // Validate input with Zod schema (all fields optional)
+      const validation = validateInput(claimListSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+
+      const { session_id, status = 'active', project_root } = validation.data;
+      const claims = await listClaims(db, { session_id, status, project_root });
 
       return createToolResult(
         JSON.stringify(

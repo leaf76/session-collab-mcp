@@ -4,6 +4,7 @@ import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
 import { sendMessage, listMessages, getSession } from '../../db/queries';
+import { validateInput, messageSendSchema, messageListSchema } from '../schemas';
 
 export const messageTools: McpTool[] = [
   {
@@ -59,12 +60,17 @@ export async function handleMessageTool(
 ): Promise<McpToolResult> {
   switch (name) {
     case 'collab_message_send': {
-      const fromSessionId = args.from_session_id as string;
-      const toSessionId = args.to_session_id as string | undefined;
-      const content = args.content as string;
+      const validation = validateInput(messageSendSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
 
       // Verify sender session
-      const fromSession = await getSession(db, fromSessionId);
+      const fromSession = await getSession(db, input.from_session_id);
       if (!fromSession || fromSession.status !== 'active') {
         return createToolResult(
           JSON.stringify({
@@ -76,8 +82,8 @@ export async function handleMessageTool(
       }
 
       // Verify target session if specified
-      if (toSessionId) {
-        const toSession = await getSession(db, toSessionId);
+      if (input.to_session_id) {
+        const toSession = await getSession(db, input.to_session_id);
         if (!toSession || toSession.status !== 'active') {
           return createToolResult(
             JSON.stringify({
@@ -90,28 +96,36 @@ export async function handleMessageTool(
       }
 
       const message = await sendMessage(db, {
-        from_session_id: fromSessionId,
-        to_session_id: toSessionId,
-        content,
+        from_session_id: input.from_session_id,
+        to_session_id: input.to_session_id,
+        content: input.content,
       });
 
       return createToolResult(
         JSON.stringify({
           success: true,
           message_id: message.id,
-          sent_to: toSessionId ?? 'all sessions (broadcast)',
+          sent_to: input.to_session_id ?? 'all sessions (broadcast)',
           message: 'Message sent successfully.',
         })
       );
     }
 
     case 'collab_message_list': {
-      const sessionId = args.session_id as string;
-      const unreadOnly = (args.unread_only as boolean) ?? true;
-      const markAsRead = (args.mark_as_read as boolean) ?? true;
+      const validation = validateInput(messageListSchema, args);
+      if (!validation.success) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: validation.error }),
+          true
+        );
+      }
+      const input = validation.data;
+
+      const unreadOnly = input.unread_only ?? true;
+      const markAsRead = input.mark_as_read ?? true;
 
       const messages = await listMessages(db, {
-        session_id: sessionId,
+        session_id: input.session_id,
         unread_only: unreadOnly,
         mark_as_read: markAsRead,
       });
