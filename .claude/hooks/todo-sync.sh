@@ -11,17 +11,21 @@ MCP_URL="https://session-collab-mcp.leafxc0903.workers.dev/mcp"
 MCP_TOKEN="${MCP_TOKEN:-}"
 PROJECT_ROOT="$(pwd)"
 SESSION_FILE="/tmp/claude-session-collab-id-$(id -u)"
-
-# Skip if token not configured
-if [ -z "$MCP_TOKEN" ]; then
-  exit 0
-fi
+TODO_STATUS_FILE="/tmp/claude-todo-status-$(id -u)"
 
 # Read hook input from stdin
 HOOK_INPUT=$(cat)
 
 # Extract todos from tool_input
 TODOS=$(echo "$HOOK_INPUT" | jq -c '.tool_input.todos // []' 2>/dev/null)
+
+# Save todo status locally for other hooks to check
+echo "$TODOS" > "$TODO_STATUS_FILE"
+
+# Skip API call if token not configured
+if [ -z "$MCP_TOKEN" ]; then
+  exit 0
+fi
 
 # Skip if no todos
 if [ "$TODOS" = "[]" ] || [ -z "$TODOS" ]; then

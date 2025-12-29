@@ -1,5 +1,6 @@
 #!/bin/bash
 # Hook: Check if file is claimed by another session before editing
+# Also checks if there's an in_progress todo before allowing edits
 # Triggered: PreToolUse for Edit/Write tools
 
 # Load token from .env file if exists
@@ -11,14 +12,27 @@ MCP_URL="https://session-collab-mcp.leafxc0903.workers.dev/mcp"
 MCP_TOKEN="${MCP_TOKEN:-}"
 PROJECT_ROOT="$(pwd)"
 SESSION_FILE="/tmp/claude-session-collab-id-$(id -u)"
-
-# Skip if token not configured
-if [ -z "$MCP_TOKEN" ]; then
-  exit 0
-fi
+TODO_STATUS_FILE="/tmp/claude-todo-status-$(id -u)"
 
 # Read hook input from stdin
 HOOK_INPUT=$(cat)
+
+# Check if there's an in_progress todo before allowing edits
+if [ -f "$TODO_STATUS_FILE" ]; then
+  TODOS=$(cat "$TODO_STATUS_FILE")
+  IN_PROGRESS=$(echo "$TODOS" | jq -r '[.[] | select(.status == "in_progress")] | length' 2>/dev/null)
+
+  if [ "$IN_PROGRESS" = "0" ] || [ -z "$IN_PROGRESS" ]; then
+    echo "WARNING: No in_progress todo found. Consider using TodoWrite to track your work before editing files."
+  fi
+else
+  echo "WARNING: No todo status found. Consider using TodoWrite to track your work before editing files."
+fi
+
+# Skip API call if token not configured
+if [ -z "$MCP_TOKEN" ]; then
+  exit 0
+fi
 
 # Extract file_path from tool_input
 FILE_PATH=$(echo "$HOOK_INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
