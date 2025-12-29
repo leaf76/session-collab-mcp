@@ -2,6 +2,7 @@
 # Hook: Auto-start session collaboration on Claude Code session start
 
 MCP_URL="https://session-collab-mcp.leafxc0903.workers.dev/mcp"
+MCP_TOKEN="${MCP_TOKEN:-mcp_7696c73ce0e7884d7b80b328ab5dd9cb48af74e9d862b0e7}"
 PROJECT_ROOT="$(pwd)"
 SESSION_NAME="${1:-claude-session}"
 
@@ -16,9 +17,16 @@ if [ "$SOURCE" = "resume" ]; then
   exit 0
 fi
 
+# Build auth header if token is available
+AUTH_HEADER=""
+if [ -n "$MCP_TOKEN" ]; then
+  AUTH_HEADER="-H \"Authorization: Bearer $MCP_TOKEN\""
+fi
+
 # Call MCP server to start session
 RESPONSE=$(curl -s -X POST "$MCP_URL" \
   -H "Content-Type: application/json" \
+  ${AUTH_HEADER:+-H "Authorization: Bearer $MCP_TOKEN"} \
   -d "{
     \"jsonrpc\": \"2.0\",
     \"id\": 1,

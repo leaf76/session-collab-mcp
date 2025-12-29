@@ -67,6 +67,7 @@ export async function listSessions(
   params: {
     include_inactive?: boolean;
     project_root?: string;
+    user_id?: string;
   } = {}
 ): Promise<Session[]> {
   let query = 'SELECT * FROM sessions WHERE 1=1';
@@ -79,6 +80,11 @@ export async function listSessions(
   if (params.project_root) {
     query += ' AND project_root = ?';
     bindings.push(params.project_root);
+  }
+
+  if (params.user_id) {
+    query += ' AND user_id = ?';
+    bindings.push(params.user_id);
   }
 
   query += ' ORDER BY last_heartbeat DESC';

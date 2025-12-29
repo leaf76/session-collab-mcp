@@ -154,7 +154,7 @@ export async function handleSessionTool(
         user_id: userId,
       });
 
-      const activeSessions = await listSessions(db, { project_root: args.project_root as string });
+      const activeSessions = await listSessions(db, { project_root: args.project_root as string, user_id: userId });
 
       return createToolResult(
         JSON.stringify(
@@ -200,6 +200,7 @@ export async function handleSessionTool(
       const sessions = await listSessions(db, {
         include_inactive: args.include_inactive as boolean,
         project_root: args.project_root as string | undefined,
+        user_id: userId,
       });
 
       // Get active claims count for each session and include status info

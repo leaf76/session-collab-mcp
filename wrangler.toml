@@ -14,3 +14,4 @@ database_id = "019c9e3e-41cf-4d11-ac83-874f48133ddd"
 
 [vars]
 ENVIRONMENT = "development"
+# JWT_SECRET: use .dev.vars for local, `wrangler secret put` for production

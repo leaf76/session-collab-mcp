@@ -16,6 +16,7 @@ import {
   handleChangePassword,
 } from './auth/handlers';
 import { handleCreateToken, handleListTokens, handleRevokeToken } from './tokens/handlers';
+import { generateAppHtml } from './frontend/app';
 
 export interface Env extends AuthEnv {
   DB: D1Database;
@@ -162,7 +163,7 @@ function handleHealthCheck(env: Env): Response {
   );
 }
 
-// Homepage HTML
+// Homepage - MCP service info and quick start
 function handleHomepage(env: Env, request: Request): Response {
   const url = new URL(request.url);
   const origin = url.origin;
@@ -173,296 +174,132 @@ function handleHomepage(env: Env, request: Request): Response {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Session Collab MCP</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      color: #e4e4e7;
+      background: #0f172a;
+      color: #e2e8f0;
       min-height: 100vh;
       padding: 2rem;
     }
-    .container { max-width: 800px; margin: 0 auto; }
-    header {
-      text-align: center;
-      margin-bottom: 3rem;
-    }
-    h1 {
-      font-size: 2.5rem;
-      background: linear-gradient(90deg, #60a5fa, #a78bfa);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      margin-bottom: 0.5rem;
-    }
-    .badge {
-      display: inline-block;
-      background: #22c55e;
-      color: #fff;
-      padding: 0.25rem 0.75rem;
-      border-radius: 9999px;
-      font-size: 0.875rem;
-      font-weight: 500;
-      margin: 0 0.25rem;
-    }
-    .badge.auth { background: #3b82f6; }
-    .card {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 1rem;
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
-    }
-    .card h2 {
-      font-size: 1.25rem;
-      color: #a78bfa;
-      margin-bottom: 1rem;
-    }
-    .tools-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 0.75rem;
-    }
-    .tool {
-      background: rgba(96,165,250,0.1);
-      border: 1px solid rgba(96,165,250,0.2);
-      border-radius: 0.5rem;
-      padding: 0.75rem;
-      font-size: 0.875rem;
-    }
-    .tool code {
-      color: #60a5fa;
-      font-weight: 600;
-    }
-    .tool p {
-      color: #a1a1aa;
-      margin-top: 0.25rem;
-      font-size: 0.75rem;
-    }
-    .endpoint {
-      display: flex;
+    .container { max-width: 720px; margin: 0 auto; }
+    header { text-align: center; margin-bottom: 2rem; }
+    h1 { font-size: 1.75rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .status {
+      display: inline-flex;
       align-items: center;
       gap: 0.5rem;
-      margin-bottom: 0.5rem;
-    }
-    .method {
-      background: #3b82f6;
-      color: #fff;
-      padding: 0.125rem 0.5rem;
-      border-radius: 0.25rem;
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      color: #22c55e;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
       font-size: 0.75rem;
-      font-weight: 600;
-      min-width: 50px;
-      text-align: center;
     }
-    .method.get { background: #22c55e; }
-    .method.put { background: #f59e0b; }
-    .method.delete { background: #ef4444; }
-    .path { font-family: monospace; color: #fbbf24; }
-    .auth-badge {
-      font-size: 0.65rem;
-      background: rgba(239, 68, 68, 0.2);
-      color: #fca5a5;
-      padding: 0.125rem 0.375rem;
-      border-radius: 0.25rem;
+    .dot {
+      width: 6px; height: 6px;
+      background: #22c55e;
+      border-radius: 50%;
     }
-    .auth-badge.public {
-      background: rgba(34, 197, 94, 0.2);
-      color: #86efac;
+    .version { color: #64748b; font-size: 0.75rem; margin-top: 0.5rem; }
+    .card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
     }
-    pre {
-      background: #0d1117;
-      border: 1px solid rgba(255,255,255,0.1);
+    h2 { font-size: 1rem; color: #94a3b8; margin-bottom: 1rem; font-weight: 500; }
+    .tools {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.5rem;
+    }
+    .tool {
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.2);
       border-radius: 0.5rem;
-      padding: 1rem;
-      overflow-x: auto;
+      padding: 0.5rem 0.75rem;
       font-size: 0.8rem;
-      line-height: 1.5;
-      margin: 0.75rem 0;
     }
-    code { color: #79c0ff; }
-    .step {
-      display: flex;
-      gap: 1rem;
-      margin-bottom: 1.5rem;
-    }
-    .step-num {
+    .tool code { color: #818cf8; }
+    .tool span { color: #64748b; font-size: 0.7rem; display: block; margin-top: 0.125rem; }
+    .step { display: flex; gap: 0.75rem; margin-bottom: 1rem; }
+    .step:last-child { margin-bottom: 0; }
+    .num {
       flex-shrink: 0;
-      width: 2rem;
-      height: 2rem;
-      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      width: 1.5rem; height: 1.5rem;
+      background: #3b82f6;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 700;
-      font-size: 0.875rem;
+      font-size: 0.75rem;
+      font-weight: 600;
     }
     .step-content { flex: 1; }
-    .step-content h3 {
-      font-size: 1rem;
-      margin-bottom: 0.5rem;
-      color: #e4e4e7;
+    .step-content h3 { font-size: 0.875rem; margin-bottom: 0.375rem; font-weight: 500; }
+    pre {
+      background: #020617;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 0.375rem;
+      padding: 0.75rem;
+      font-size: 0.7rem;
+      overflow-x: auto;
+      line-height: 1.5;
     }
-    .step-content p {
-      color: #a1a1aa;
-      font-size: 0.875rem;
-      margin-bottom: 0.5rem;
-    }
+    code { color: #7dd3fc; }
     .copy-btn {
-      background: rgba(96,165,250,0.2);
-      border: 1px solid rgba(96,165,250,0.3);
+      background: rgba(59, 130, 246, 0.2);
+      border: 1px solid rgba(59, 130, 246, 0.3);
       color: #60a5fa;
-      padding: 0.25rem 0.75rem;
+      padding: 0.2rem 0.5rem;
       border-radius: 0.25rem;
       cursor: pointer;
-      font-size: 0.75rem;
-      margin-top: 0.5rem;
+      font-size: 0.65rem;
+      margin-top: 0.375rem;
     }
-    .copy-btn:hover { background: rgba(96,165,250,0.3); }
-    footer {
-      text-align: center;
-      margin-top: 2rem;
-      color: #71717a;
+    .copy-btn:hover { background: rgba(59, 130, 246, 0.3); }
+    footer { text-align: center; color: #475569; font-size: 0.7rem; margin-top: 1.5rem; }
+    .login-btn {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.5rem 1.5rem;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      color: #fff;
+      text-decoration: none;
+      border-radius: 0.5rem;
       font-size: 0.875rem;
+      font-weight: 500;
+      transition: opacity 0.2s;
     }
-    .section-title {
-      font-size: 0.875rem;
-      color: #71717a;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin: 1rem 0 0.5rem;
-    }
+    .login-btn:hover { opacity: 0.9; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <h1>Session Collab MCP</h1>
-      <span class="badge">v0.2.0</span>
-      <span class="badge">${env.ENVIRONMENT}</span>
-      ${env.JWT_SECRET || env.API_TOKEN ? '<span class="badge auth">Auth Enabled</span>' : ''}
+      <div class="status"><span class="dot"></span>Operational</div>
+      <p class="version">v0.2.0 · ${env.ENVIRONMENT}</p>
+      <a href="/app" class="login-btn">Login</a>
     </header>
 
     <div class="card">
-      <h2>API Endpoints</h2>
-
-      <div class="section-title">Authentication</div>
-      <div class="endpoint">
-        <span class="method">POST</span>
-        <span class="path">/auth/register</span>
-        <span class="auth-badge public">Public</span>
-      </div>
-      <div class="endpoint">
-        <span class="method">POST</span>
-        <span class="path">/auth/login</span>
-        <span class="auth-badge public">Public</span>
-      </div>
-      <div class="endpoint">
-        <span class="method">POST</span>
-        <span class="path">/auth/refresh</span>
-        <span class="auth-badge public">Public</span>
-      </div>
-      <div class="endpoint">
-        <span class="method">POST</span>
-        <span class="path">/auth/logout</span>
-        <span class="auth-badge">JWT</span>
-      </div>
-      <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/auth/me</span>
-        <span class="auth-badge">JWT</span>
-      </div>
-      <div class="endpoint">
-        <span class="method put">PUT</span>
-        <span class="path">/auth/me</span>
-        <span class="auth-badge">JWT</span>
-      </div>
-      <div class="endpoint">
-        <span class="method put">PUT</span>
-        <span class="path">/auth/password</span>
-        <span class="auth-badge">JWT</span>
-      </div>
-
-      <div class="section-title">API Tokens</div>
-      <div class="endpoint">
-        <span class="method">POST</span>
-        <span class="path">/tokens</span>
-        <span class="auth-badge">JWT</span>
-      </div>
-      <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/tokens</span>
-        <span class="auth-badge">JWT</span>
-      </div>
-      <div class="endpoint">
-        <span class="method delete">DELETE</span>
-        <span class="path">/tokens/:id</span>
-        <span class="auth-badge">JWT</span>
-      </div>
-
-      <div class="section-title">MCP</div>
-      <div class="endpoint">
-        <span class="method">POST</span>
-        <span class="path">/mcp</span>
-        <span class="auth-badge">API Token</span>
-      </div>
-      <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/health</span>
-        <span class="auth-badge public">Public</span>
-      </div>
-    </div>
-
-    <div class="card">
       <h2>MCP Tools</h2>
-      <div class="tools-grid">
-        <div class="tool">
-          <code>collab_session_start</code>
-          <p>Start a new session</p>
-        </div>
-        <div class="tool">
-          <code>collab_session_end</code>
-          <p>End a session</p>
-        </div>
-        <div class="tool">
-          <code>collab_session_list</code>
-          <p>List active sessions</p>
-        </div>
-        <div class="tool">
-          <code>collab_session_heartbeat</code>
-          <p>Update session heartbeat</p>
-        </div>
-        <div class="tool">
-          <code>collab_claim</code>
-          <p>Claim files for editing</p>
-        </div>
-        <div class="tool">
-          <code>collab_check</code>
-          <p>Check file conflicts</p>
-        </div>
-        <div class="tool">
-          <code>collab_release</code>
-          <p>Release a file claim</p>
-        </div>
-        <div class="tool">
-          <code>collab_claims_list</code>
-          <p>List all claims</p>
-        </div>
-        <div class="tool">
-          <code>collab_message_send</code>
-          <p>Send message to sessions</p>
-        </div>
-        <div class="tool">
-          <code>collab_message_list</code>
-          <p>Read messages</p>
-        </div>
-        <div class="tool">
-          <code>collab_decision_add</code>
-          <p>Record a decision</p>
-        </div>
-        <div class="tool">
-          <code>collab_decision_list</code>
-          <p>List decisions</p>
-        </div>
+      <div class="tools">
+        <div class="tool"><code>collab_session_start</code><span>Start a session</span></div>
+        <div class="tool"><code>collab_session_end</code><span>End a session</span></div>
+        <div class="tool"><code>collab_session_list</code><span>List sessions</span></div>
+        <div class="tool"><code>collab_session_heartbeat</code><span>Update heartbeat</span></div>
+        <div class="tool"><code>collab_claim</code><span>Claim files</span></div>
+        <div class="tool"><code>collab_check</code><span>Check conflicts</span></div>
+        <div class="tool"><code>collab_release</code><span>Release claim</span></div>
+        <div class="tool"><code>collab_claims_list</code><span>List all claims</span></div>
+        <div class="tool"><code>collab_message_send</code><span>Send message</span></div>
+        <div class="tool"><code>collab_message_list</code><span>Read messages</span></div>
+        <div class="tool"><code>collab_decision_add</code><span>Record decision</span></div>
+        <div class="tool"><code>collab_decision_list</code><span>List decisions</span></div>
       </div>
     </div>
 
@@ -470,61 +307,52 @@ function handleHomepage(env: Env, request: Request): Response {
       <h2>Quick Start</h2>
 
       <div class="step">
-        <div class="step-num">1</div>
+        <div class="num">1</div>
         <div class="step-content">
-          <h3>Register an Account</h3>
-          <pre id="register-curl">curl -X POST ${origin}/auth/register \\
-  -H "Content-Type: application/json" \\
-  -d '{"email": "you@example.com", "password": "YourPassword123"}'</pre>
-          <button class="copy-btn" onclick="copyToClipboard('register-curl')">Copy</button>
+          <h3>Register & Login</h3>
+          <pre id="s1">curl -X POST ${origin}/auth/register -H "Content-Type: application/json" \\
+  -d '{"email": "you@example.com", "password": "YourPass123"}'</pre>
+          <button class="copy-btn" onclick="copy('s1')">Copy</button>
         </div>
       </div>
 
       <div class="step">
-        <div class="step-num">2</div>
+        <div class="num">2</div>
         <div class="step-content">
-          <h3>Create an API Token</h3>
-          <p>Use the <code>access_token</code> from login to create an API token:</p>
-          <pre id="create-token">curl -X POST ${origin}/tokens \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \\
-  -d '{"name": "Claude Code - My Machine"}'</pre>
-          <button class="copy-btn" onclick="copyToClipboard('create-token')">Copy</button>
+          <h3>Create API Token</h3>
+          <pre id="s2">curl -X POST ${origin}/tokens -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ACCESS_TOKEN" -d '{"name": "My Machine"}'</pre>
+          <button class="copy-btn" onclick="copy('s2')">Copy</button>
         </div>
       </div>
 
       <div class="step">
-        <div class="step-num">3</div>
+        <div class="num">3</div>
         <div class="step-content">
           <h3>Configure Claude Code</h3>
-          <p>Add to <code>~/.claude.json</code>:</p>
-          <pre id="mcp-config">{
+          <pre id="s3">{
   "mcpServers": {
     "session-collab": {
-      "type": "url",
+      "type": "http",
       "url": "${origin}/mcp",
       "headers": {
-        "Authorization": "Bearer mcp_YOUR_API_TOKEN"
+        "Authorization": "Bearer mcp_YOUR_TOKEN"
       }
     }
   }
 }</pre>
-          <button class="copy-btn" onclick="copyToClipboard('mcp-config')">Copy</button>
+          <button class="copy-btn" onclick="copy('s3')">Copy</button>
         </div>
       </div>
     </div>
 
-    <footer>
-      Powered by Cloudflare Workers + D1
-    </footer>
+    <footer>Powered by Cloudflare Workers + D1</footer>
   </div>
-
   <script>
-    function copyToClipboard(id) {
-      const el = document.getElementById(id);
-      navigator.clipboard.writeText(el.textContent);
+    function copy(id) {
+      navigator.clipboard.writeText(document.getElementById(id).textContent);
       event.target.textContent = 'Copied!';
-      setTimeout(() => event.target.textContent = 'Copy', 2000);
+      setTimeout(() => event.target.textContent = 'Copy', 1500);
     }
   </script>
 </body>
@@ -557,6 +385,14 @@ export default {
     // Homepage
     if (pathname === '/') {
       return handleHomepage(env, request);
+    }
+
+    // Dashboard App
+    if (pathname === '/app' || pathname === '/dashboard') {
+      const html = generateAppHtml(url.origin);
+      return new Response(html, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders },
+      });
     }
 
     // Health check
