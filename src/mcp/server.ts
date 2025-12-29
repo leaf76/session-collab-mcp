@@ -18,10 +18,11 @@ import { sessionTools, handleSessionTool } from './tools/session';
 import { claimTools, handleClaimTool } from './tools/claim';
 import { messageTools, handleMessageTool } from './tools/message';
 import { decisionTools, handleDecisionTool } from './tools/decision';
+import type { AuthContext } from '../auth/types';
 
 const SERVER_INFO: McpServerInfo = {
   name: 'session-collab-mcp',
-  version: '0.1.0',
+  version: '0.2.0',
 };
 
 const CAPABILITIES: McpCapabilities = {
@@ -32,7 +33,11 @@ const CAPABILITIES: McpCapabilities = {
 const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools];
 
 export class McpServer {
-  constructor(private db: D1Database) {}
+  private authContext?: AuthContext;
+
+  constructor(private db: D1Database, authContext?: AuthContext) {
+    this.authContext = authContext;
+  }
 
   async handleRequest(request: JsonRpcRequest): Promise<JsonRpcResponse> {
     const { method, params, id } = request;
@@ -84,10 +89,13 @@ export class McpServer {
 
     let result: McpToolResult;
 
+    // Get user_id from auth context (for associating sessions with users)
+    const userId = this.authContext?.userId !== 'legacy' ? this.authContext?.userId : undefined;
+
     try {
       // Route to appropriate handler
       if (name.startsWith('collab_session_')) {
-        result = await handleSessionTool(this.db, name, args);
+        result = await handleSessionTool(this.db, name, args, userId);
       } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
         result = await handleClaimTool(this.db, name, args);
       } else if (name.startsWith('collab_message_')) {
