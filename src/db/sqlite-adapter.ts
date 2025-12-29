@@ -39,7 +39,8 @@ class SqlitePreparedStatement implements PreparedStatement {
 
   constructor(
     private db: Database.Database,
-    private sql: string
+    private sql: string,
+    private onWrite?: () => void
   ) {}
 
   bind(...values: unknown[]): PreparedStatement {
@@ -65,6 +66,8 @@ class SqlitePreparedStatement implements PreparedStatement {
   async run(): Promise<{ meta: { changes: number } }> {
     const stmt = this.db.prepare(this.sql);
     const result = stmt.run(...this.bindings);
+    // Trigger checkpoint after write
+    this.onWrite?.();
     return {
       meta: { changes: result.changes },
     };
@@ -88,12 +91,25 @@ class SqliteDatabase implements DatabaseAdapter {
     }
 
     this.db = new Database(dbPath);
+
+    // Multi-process SQLite configuration
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    this.db.pragma('busy_timeout = 5000');      // Wait up to 5s for locks
+    this.db.pragma('synchronous = NORMAL');     // Ensure durability
+    this.db.pragma('wal_autocheckpoint = 100'); // Checkpoint every 100 pages
+
+    // Checkpoint on open to see latest data from other processes
+    this.db.pragma('wal_checkpoint(PASSIVE)');
+  }
+
+  // Force checkpoint to make changes visible to other processes
+  checkpoint(): void {
+    this.db.pragma('wal_checkpoint(PASSIVE)');
   }
 
   prepare(sql: string): PreparedStatement {
-    return new SqlitePreparedStatement(this.db, sql);
+    return new SqlitePreparedStatement(this.db, sql, () => this.checkpoint());
   }
 
   async batch(statements: PreparedStatement[]): Promise<QueryResult<unknown>[]> {
@@ -107,7 +123,10 @@ class SqliteDatabase implements DatabaseAdapter {
         };
       });
     });
-    return transaction();
+    const results = transaction();
+    // Checkpoint after batch write
+    this.checkpoint();
+    return results;
   }
 
   // Initialize database schema

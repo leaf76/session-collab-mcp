@@ -1,4 +1,5 @@
 // MCP Server implementation for Session Collaboration
+// Last edited: 2025-12-29 by session-b
 
 import type { DatabaseAdapter } from '../db/sqlite-adapter.js';
 import {

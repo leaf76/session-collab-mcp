@@ -1,6 +1,6 @@
 {
   "name": "session-collab-mcp",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "MCP server for Claude Code session collaboration - prevents conflicts between parallel sessions",
   "type": "module",
   "bin": {
