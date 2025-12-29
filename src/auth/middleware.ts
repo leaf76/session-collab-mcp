@@ -1,13 +1,13 @@
 // Authentication middleware
 
-import type { D1Database } from '../db/sqlite-adapter.js';
+import type { DatabaseAdapter } from '../db/sqlite-adapter.js';
 import { verifyJwt } from './jwt';
 import { getApiTokenByHash, updateApiTokenLastUsed } from '../db/auth-queries';
 import { sha256, timingSafeEqual } from '../utils/crypto';
 import type { AuthContext } from './types';
 
 export interface Env {
-  DB: D1Database;
+  DB: DatabaseAdapter;
   JWT_SECRET?: string;
   API_TOKEN?: string; // Legacy single token support
 }
@@ -52,7 +52,7 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthCont
 /**
  * Validate API Token
  */
-async function validateApiToken(token: string, db: D1Database): Promise<AuthContext | null> {
+async function validateApiToken(token: string, db: DatabaseAdapter): Promise<AuthContext | null> {
   const tokenHash = await sha256(token);
   const apiToken = await getApiTokenByHash(db, tokenHash);
 

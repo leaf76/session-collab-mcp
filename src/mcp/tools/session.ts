@@ -1,6 +1,6 @@
 // Session management tools
 
-import type { D1Database } from '../../db/sqlite-adapter.js';
+import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
 import {
@@ -9,11 +9,13 @@ import {
   listSessions,
   updateSessionHeartbeat,
   updateSessionStatus,
+  updateSessionConfig,
   endSession,
   cleanupStaleSessions,
   listClaims,
 } from '../../db/queries';
-import type { TodoItem } from '../../db/types';
+import type { TodoItem, SessionConfig, ConflictMode } from '../../db/types';
+import { DEFAULT_SESSION_CONFIG } from '../../db/types';
 
 export const sessionTools: McpTool[] = [
   {
@@ -134,10 +136,41 @@ export const sessionTools: McpTool[] = [
       required: ['session_id'],
     },
   },
+  {
+    name: 'collab_config',
+    description: 'Configure session behavior for conflict handling. Settings persist for the session duration.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Your session ID',
+        },
+        mode: {
+          type: 'string',
+          enum: ['strict', 'smart', 'bypass'],
+          description: 'Conflict handling mode: strict (always ask), smart (ask but suggest for stale), bypass (warn only)',
+        },
+        allow_release_others: {
+          type: 'boolean',
+          description: 'Allow releasing claims from other sessions (default: false)',
+        },
+        auto_release_stale: {
+          type: 'boolean',
+          description: 'Automatically release stale claims (default: false)',
+        },
+        stale_threshold_hours: {
+          type: 'number',
+          description: 'Hours before a claim is considered stale (default: 2)',
+        },
+      },
+      required: ['session_id'],
+    },
+  },
 ];
 
 export async function handleSessionTool(
-  db: D1Database,
+  db: DatabaseAdapter,
   name: string,
   args: Record<string, unknown>,
   userId?: string
@@ -312,6 +345,65 @@ export async function handleSessionTool(
           message: 'Status updated successfully.',
           current_task: currentTask ?? null,
           progress,
+        })
+      );
+    }
+
+    case 'collab_config': {
+      const sessionId = args.session_id as string;
+
+      // Validate session_id input
+      if (!sessionId || typeof sessionId !== 'string') {
+        return createToolResult(
+          JSON.stringify({
+            error: 'INVALID_INPUT',
+            message: 'session_id is required',
+          }),
+          true
+        );
+      }
+
+      // Validate session exists
+      const session = await getSession(db, sessionId);
+      if (!session || session.status !== 'active') {
+        return createToolResult(
+          JSON.stringify({
+            error: 'SESSION_INVALID',
+            message: 'Session not found or inactive.',
+          }),
+          true
+        );
+      }
+
+      // Get current config or default
+      let currentConfig: SessionConfig = DEFAULT_SESSION_CONFIG;
+      if (session.config) {
+        try {
+          currentConfig = { ...DEFAULT_SESSION_CONFIG, ...JSON.parse(session.config) };
+        } catch {
+          // Use default if parse fails
+        }
+      }
+
+      // Update with new values
+      const newConfig: SessionConfig = {
+        mode: (args.mode as ConflictMode) ?? currentConfig.mode,
+        allow_release_others: args.allow_release_others !== undefined
+          ? (args.allow_release_others as boolean)
+          : currentConfig.allow_release_others,
+        auto_release_stale: args.auto_release_stale !== undefined
+          ? (args.auto_release_stale as boolean)
+          : currentConfig.auto_release_stale,
+        stale_threshold_hours: (args.stale_threshold_hours as number) ?? currentConfig.stale_threshold_hours,
+      };
+
+      await updateSessionConfig(db, sessionId, newConfig);
+
+      return createToolResult(
+        JSON.stringify({
+          success: true,
+          message: 'Configuration updated.',
+          config: newConfig,
         })
       );
     }

@@ -64,6 +64,23 @@ export interface TodoItem {
   status: 'pending' | 'in_progress' | 'completed';
 }
 
+// Session configuration
+export type ConflictMode = 'strict' | 'smart' | 'bypass';
+
+export interface SessionConfig {
+  mode: ConflictMode;
+  allow_release_others: boolean;
+  auto_release_stale: boolean;
+  stale_threshold_hours: number;
+}
+
+export const DEFAULT_SESSION_CONFIG: SessionConfig = {
+  mode: 'smart',
+  allow_release_others: false,
+  auto_release_stale: false,
+  stale_threshold_hours: 2,
+};
+
 export interface SessionProgress {
   completed: number;
   total: number;
@@ -82,6 +99,7 @@ export interface Session {
   current_task: string | null;
   progress: string | null; // JSON string of SessionProgress
   todos: string | null; // JSON string of TodoItem[]
+  config: string | null; // JSON string of SessionConfig
 }
 
 export interface Claim {

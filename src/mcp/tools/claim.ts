@@ -1,9 +1,10 @@
 // Claim management tools (WIP declarations)
 
-import type { D1Database } from '../../db/sqlite-adapter.js';
+import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
-import type { ClaimScope } from '../../db/types';
+import type { ClaimScope, SessionConfig } from '../../db/types';
+import { DEFAULT_SESSION_CONFIG } from '../../db/types';
 import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession } from '../../db/queries';
 
 export const claimTools: McpTool[] = [
@@ -58,10 +59,14 @@ export const claimTools: McpTool[] = [
   },
   {
     name: 'collab_release',
-    description: 'Release a claim when done or abandoning work.',
+    description: 'Release a claim when done or abandoning work. By default you can only release your own claims. Use force=true with user confirmation to release stale claims from other sessions.',
     inputSchema: {
       type: 'object',
       properties: {
+        session_id: {
+          type: 'string',
+          description: 'Your session ID (required to verify ownership)',
+        },
         claim_id: {
           type: 'string',
           description: 'Claim ID to release',
@@ -75,8 +80,12 @@ export const claimTools: McpTool[] = [
           type: 'string',
           description: 'Optional summary of what was done (for completed claims)',
         },
+        force: {
+          type: 'boolean',
+          description: 'Force release even if claim belongs to another session (requires user confirmation)',
+        },
       },
-      required: ['claim_id', 'status'],
+      required: ['session_id', 'claim_id', 'status'],
     },
   },
   {
@@ -104,7 +113,7 @@ export const claimTools: McpTool[] = [
 ];
 
 export async function handleClaimTool(
-  db: D1Database,
+  db: DatabaseAdapter,
   name: string,
   args: Record<string, unknown>
 ): Promise<McpToolResult> {
@@ -286,9 +295,22 @@ export async function handleClaimTool(
     }
 
     case 'collab_release': {
+      const sessionId = args.session_id as string;
       const claimId = args.claim_id as string;
       const status = args.status as 'completed' | 'abandoned';
       const summary = args.summary as string | undefined;
+      const force = args.force as boolean | undefined;
+
+      // Validate session_id
+      if (!sessionId || typeof sessionId !== 'string') {
+        return createToolResult(
+          JSON.stringify({
+            error: 'INVALID_INPUT',
+            message: 'session_id is required to verify ownership',
+          }),
+          true
+        );
+      }
 
       const claim = await getClaim(db, claimId);
       if (!claim) {
@@ -301,6 +323,46 @@ export async function handleClaimTool(
         );
       }
 
+      // Check ownership - only allow releasing your own claims unless config allows or force=true
+      if (claim.session_id !== sessionId) {
+        // Get caller's session config
+        const callerSession = await getSession(db, sessionId);
+        let config: SessionConfig = DEFAULT_SESSION_CONFIG;
+        if (callerSession?.config) {
+          try {
+            config = { ...DEFAULT_SESSION_CONFIG, ...JSON.parse(callerSession.config) };
+          } catch {
+            // Use default if parse fails
+          }
+        }
+
+        // Check if allowed to release others' claims
+        const canRelease = force === true || config.allow_release_others;
+
+        if (!canRelease) {
+          // Calculate how old the claim is
+          const claimAge = Date.now() - new Date(claim.created_at).getTime();
+          const staleHours = config.stale_threshold_hours;
+          const isStale = claimAge > staleHours * 60 * 60 * 1000;
+
+          return createToolResult(
+            JSON.stringify({
+              error: 'NOT_OWNER',
+              message: 'You can only release your own claims. This claim belongs to another session.',
+              claim_owner: claim.session_name,
+              claim_age_hours: Math.round(claimAge / (60 * 60 * 1000) * 10) / 10,
+              is_stale: isStale,
+              suggestions: [
+                'Use collab_message_send to ask the owner to release it.',
+                isStale ? 'This claim is stale. Ask user for confirmation, then use force=true to release.' : null,
+                'Use collab_config to enable allow_release_others for future releases.',
+              ].filter(Boolean),
+            }),
+            true
+          );
+        }
+      }
+
       if (claim.status !== 'active') {
         return createToolResult(
           JSON.stringify({
@@ -311,14 +373,18 @@ export async function handleClaimTool(
         );
       }
 
+      const isOwnClaim = claim.session_id === sessionId;
       await releaseClaim(db, claimId, { status, summary });
 
       return createToolResult(
         JSON.stringify({
           success: true,
-          message: `Claim ${status}. Files are now available for other sessions.`,
+          message: isOwnClaim
+            ? `Claim ${status}. Files are now available for other sessions.`
+            : `Claim from ${claim.session_name} forcefully ${status}.`,
           files: claim.files,
           summary: summary ?? null,
+          was_forced: !isOwnClaim,
         })
       );
     }

@@ -1,6 +1,6 @@
 // Database queries for Session Collaboration MCP
 
-import type { D1Database } from './sqlite-adapter.js';
+import type { DatabaseAdapter } from './sqlite-adapter.js';
 import type {
   Session,
   Claim,
@@ -13,6 +13,7 @@ import type {
   DecisionCategory,
   TodoItem,
   SessionProgress,
+  SessionConfig,
 } from './types';
 
 // Helper to generate UUID v4
@@ -23,7 +24,7 @@ function generateId(): string {
 // ============ Session Queries ============
 
 export async function createSession(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     name?: string;
     project_root: string;
@@ -54,16 +55,17 @@ export async function createSession(
     current_task: null,
     progress: null,
     todos: null,
+    config: null,
   };
 }
 
-export async function getSession(db: D1Database, id: string): Promise<Session | null> {
+export async function getSession(db: DatabaseAdapter, id: string): Promise<Session | null> {
   const result = await db.prepare('SELECT * FROM sessions WHERE id = ?').bind(id).first<Session>();
   return result ?? null;
 }
 
 export async function listSessions(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     include_inactive?: boolean;
     project_root?: string;
@@ -97,7 +99,7 @@ export async function listSessions(
 }
 
 export async function updateSessionHeartbeat(
-  db: D1Database,
+  db: DatabaseAdapter,
   id: string,
   statusUpdate?: {
     current_task?: string | null;
@@ -150,7 +152,7 @@ export async function updateSessionHeartbeat(
 }
 
 export async function updateSessionStatus(
-  db: D1Database,
+  db: DatabaseAdapter,
   id: string,
   params: {
     current_task?: string | null;
@@ -193,7 +195,7 @@ export async function updateSessionStatus(
 }
 
 export async function endSession(
-  db: D1Database,
+  db: DatabaseAdapter,
   id: string,
   release_claims: 'complete' | 'abandon' = 'abandon'
 ): Promise<boolean> {
@@ -211,7 +213,7 @@ export async function endSession(
   return result.meta.changes > 0;
 }
 
-export async function cleanupStaleSessions(db: D1Database, staleMinutes: number = 30): Promise<{ stale_sessions: number; orphaned_claims: number }> {
+export async function cleanupStaleSessions(db: DatabaseAdapter, staleMinutes: number = 30): Promise<{ stale_sessions: number; orphaned_claims: number }> {
   const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
   const now = new Date().toISOString();
 
@@ -238,10 +240,23 @@ export async function cleanupStaleSessions(db: D1Database, staleMinutes: number 
   };
 }
 
+export async function updateSessionConfig(
+  db: DatabaseAdapter,
+  id: string,
+  config: SessionConfig
+): Promise<boolean> {
+  const result = await db
+    .prepare('UPDATE sessions SET config = ? WHERE id = ?')
+    .bind(JSON.stringify(config), id)
+    .run();
+
+  return result.meta.changes > 0;
+}
+
 // ============ Claim Queries ============
 
 export async function createClaim(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     session_id: string;
     files: string[];
@@ -285,7 +300,7 @@ export async function createClaim(
   };
 }
 
-export async function getClaim(db: D1Database, id: string): Promise<ClaimWithFiles | null> {
+export async function getClaim(db: DatabaseAdapter, id: string): Promise<ClaimWithFiles | null> {
   const claim = await db.prepare('SELECT * FROM claims WHERE id = ?').bind(id).first<Claim>();
 
   if (!claim) return null;
@@ -302,7 +317,7 @@ export async function getClaim(db: D1Database, id: string): Promise<ClaimWithFil
 }
 
 export async function listClaims(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     session_id?: string;
     status?: ClaimStatus | 'all';
@@ -367,7 +382,7 @@ export async function listClaims(
 }
 
 export async function checkConflicts(
-  db: D1Database,
+  db: DatabaseAdapter,
   files: string[],
   excludeSessionId?: string
 ): Promise<ConflictInfo[]> {
@@ -417,7 +432,7 @@ export async function checkConflicts(
 }
 
 export async function releaseClaim(
-  db: D1Database,
+  db: DatabaseAdapter,
   id: string,
   params: {
     status: 'completed' | 'abandoned';
@@ -437,7 +452,7 @@ export async function releaseClaim(
 // ============ Message Queries ============
 
 export async function sendMessage(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     from_session_id: string;
     to_session_id?: string;
@@ -466,7 +481,7 @@ export async function sendMessage(
 }
 
 export async function listMessages(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     session_id: string;
     unread_only?: boolean;
@@ -506,7 +521,7 @@ export async function listMessages(
 // ============ Decision Queries ============
 
 export async function addDecision(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     session_id: string;
     category?: DecisionCategory;
@@ -536,7 +551,7 @@ export async function addDecision(
 }
 
 export async function listDecisions(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     category?: DecisionCategory;
     limit?: number;

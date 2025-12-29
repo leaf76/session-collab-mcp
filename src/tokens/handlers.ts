@@ -1,6 +1,6 @@
 // Token management API handlers
 
-import type { D1Database } from '../db/sqlite-adapter.js';
+import type { DatabaseAdapter } from '../db/sqlite-adapter.js';
 import { z } from 'zod';
 import { generateApiToken } from './generator';
 import { createApiToken, listApiTokens, revokeApiToken } from '../db/auth-queries';
@@ -14,7 +14,7 @@ const CreateTokenRequestSchema = z.object({
 });
 
 interface HandlerContext {
-  db: D1Database;
+  db: DatabaseAdapter;
   request: Request;
 }
 

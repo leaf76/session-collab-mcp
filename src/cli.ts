@@ -5,6 +5,7 @@
 import { createInterface } from 'readline';
 import { createLocalDatabase, getDefaultDbPath } from './db/sqlite-adapter.js';
 import { handleMcpRequest, getMcpTools } from './mcp/server.js';
+import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from './constants.js';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -17,6 +18,7 @@ function loadMigrations(): string[] {
   return [
     readFileSync(join(migrationsDir, '0001_init.sql'), 'utf-8'),
     readFileSync(join(migrationsDir, '0002_auth.sql'), 'utf-8'),
+    readFileSync(join(migrationsDir, '0003_config.sql'), 'utf-8'),
   ];
 }
 
@@ -85,9 +87,10 @@ async function main(): Promise<void> {
               tools: {},
             },
             serverInfo: {
-              name: 'session-collab-mcp',
-              version: '0.3.0',
+              name: SERVER_NAME,
+              version: VERSION,
             },
+            instructions: SERVER_INSTRUCTIONS,
           });
           console.log(response);
           break;

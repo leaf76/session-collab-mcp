@@ -1,6 +1,6 @@
 // MCP Server implementation for Session Collaboration
 
-import type { D1Database } from '../db/sqlite-adapter.js';
+import type { DatabaseAdapter } from '../db/sqlite-adapter.js';
 import {
   JsonRpcRequestSchema,
   type JsonRpcRequest,
@@ -19,10 +19,11 @@ import { claimTools, handleClaimTool } from './tools/claim';
 import { messageTools, handleMessageTool } from './tools/message';
 import { decisionTools, handleDecisionTool } from './tools/decision';
 import type { AuthContext } from '../auth/types';
+import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from '../constants.js';
 
 const SERVER_INFO: McpServerInfo = {
-  name: 'session-collab-mcp',
-  version: '0.2.0',
+  name: SERVER_NAME,
+  version: VERSION,
 };
 
 const CAPABILITIES: McpCapabilities = {
@@ -35,7 +36,7 @@ const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, .
 export class McpServer {
   private authContext?: AuthContext;
 
-  constructor(private db: D1Database, authContext?: AuthContext) {
+  constructor(private db: DatabaseAdapter, authContext?: AuthContext) {
     this.authContext = authContext;
   }
 
@@ -74,6 +75,7 @@ export class McpServer {
       protocolVersion: '2024-11-05',
       serverInfo: SERVER_INFO,
       capabilities: CAPABILITIES,
+      instructions: SERVER_INSTRUCTIONS,
     });
   }
 
@@ -94,7 +96,7 @@ export class McpServer {
 
     try {
       // Route to appropriate handler
-      if (name.startsWith('collab_session_') || name === 'collab_status_update') {
+      if (name.startsWith('collab_session_') || name === 'collab_status_update' || name === 'collab_config') {
         result = await handleSessionTool(this.db, name, args, userId);
       } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
         result = await handleClaimTool(this.db, name, args);
@@ -132,12 +134,12 @@ export function getMcpTools(): McpTool[] {
 
 // Handle MCP tool call for CLI
 export async function handleMcpRequest(
-  db: D1Database,
+  db: DatabaseAdapter,
   name: string,
   args: Record<string, unknown>
 ): Promise<McpToolResult> {
   try {
-    if (name.startsWith('collab_session_') || name === 'collab_status_update') {
+    if (name.startsWith('collab_session_') || name === 'collab_status_update' || name === 'collab_config') {
       return await handleSessionTool(db, name, args);
     } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
       return await handleClaimTool(db, name, args);

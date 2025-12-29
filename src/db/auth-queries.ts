@@ -1,13 +1,13 @@
 // Database queries for authentication
 
-import type { D1Database } from './sqlite-adapter.js';
+import type { DatabaseAdapter } from './sqlite-adapter.js';
 import type { User, UserPublic, ApiToken, ApiTokenPublic, RefreshToken } from './types';
 import { generateId, sha256 } from '../utils/crypto';
 
 // ============ User Queries ============
 
 export async function createUser(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     email: string;
     password_hash: string;
@@ -37,29 +37,29 @@ export async function createUser(
   };
 }
 
-export async function getUserByEmail(db: D1Database, email: string): Promise<User | null> {
+export async function getUserByEmail(db: DatabaseAdapter, email: string): Promise<User | null> {
   const result = await db.prepare('SELECT * FROM users WHERE email = ? AND status = ?').bind(email.toLowerCase(), 'active').first<User>();
   return result ?? null;
 }
 
-export async function getUserById(db: D1Database, id: string): Promise<User | null> {
+export async function getUserById(db: DatabaseAdapter, id: string): Promise<User | null> {
   const result = await db.prepare('SELECT * FROM users WHERE id = ? AND status = ?').bind(id, 'active').first<User>();
   return result ?? null;
 }
 
-export async function updateUserLastLogin(db: D1Database, id: string): Promise<void> {
+export async function updateUserLastLogin(db: DatabaseAdapter, id: string): Promise<void> {
   const now = new Date().toISOString();
   await db.prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?').bind(now, now, id).run();
 }
 
-export async function updateUserPassword(db: D1Database, id: string, password_hash: string): Promise<boolean> {
+export async function updateUserPassword(db: DatabaseAdapter, id: string, password_hash: string): Promise<boolean> {
   const now = new Date().toISOString();
   const result = await db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').bind(password_hash, now, id).run();
   return result.meta.changes > 0;
 }
 
 export async function updateUserProfile(
-  db: D1Database,
+  db: DatabaseAdapter,
   id: string,
   params: { display_name?: string }
 ): Promise<boolean> {
@@ -80,7 +80,7 @@ export function toUserPublic(user: User): UserPublic {
 // ============ API Token Queries ============
 
 export async function createApiToken(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     user_id: string;
     name: string;
@@ -121,7 +121,7 @@ export async function createApiToken(
   };
 }
 
-export async function getApiTokenByHash(db: D1Database, tokenHash: string): Promise<ApiToken | null> {
+export async function getApiTokenByHash(db: DatabaseAdapter, tokenHash: string): Promise<ApiToken | null> {
   const result = await db
     .prepare('SELECT * FROM api_tokens WHERE token_hash = ? AND revoked_at IS NULL')
     .bind(tokenHash)
@@ -137,7 +137,7 @@ export async function getApiTokenByHash(db: D1Database, tokenHash: string): Prom
   return result;
 }
 
-export async function listApiTokens(db: D1Database, userId: string): Promise<ApiTokenPublic[]> {
+export async function listApiTokens(db: DatabaseAdapter, userId: string): Promise<ApiTokenPublic[]> {
   const result = await db
     .prepare('SELECT * FROM api_tokens WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC')
     .bind(userId)
@@ -146,13 +146,13 @@ export async function listApiTokens(db: D1Database, userId: string): Promise<Api
   return result.results.map(toApiTokenPublic);
 }
 
-export async function revokeApiToken(db: D1Database, id: string, userId: string): Promise<boolean> {
+export async function revokeApiToken(db: DatabaseAdapter, id: string, userId: string): Promise<boolean> {
   const now = new Date().toISOString();
   const result = await db.prepare('UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND user_id = ?').bind(now, id, userId).run();
   return result.meta.changes > 0;
 }
 
-export async function updateApiTokenLastUsed(db: D1Database, id: string): Promise<void> {
+export async function updateApiTokenLastUsed(db: DatabaseAdapter, id: string): Promise<void> {
   const now = new Date().toISOString();
   await db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').bind(now, id).run();
 }
@@ -172,7 +172,7 @@ export function toApiTokenPublic(token: ApiToken): ApiTokenPublic {
 // ============ Refresh Token Queries ============
 
 export async function createRefreshToken(
-  db: D1Database,
+  db: DatabaseAdapter,
   params: {
     user_id: string;
     token_hash: string;
@@ -204,7 +204,7 @@ export async function createRefreshToken(
   };
 }
 
-export async function getRefreshTokenByHash(db: D1Database, tokenHash: string): Promise<RefreshToken | null> {
+export async function getRefreshTokenByHash(db: DatabaseAdapter, tokenHash: string): Promise<RefreshToken | null> {
   const result = await db
     .prepare('SELECT * FROM refresh_tokens WHERE token_hash = ? AND revoked_at IS NULL')
     .bind(tokenHash)
@@ -220,13 +220,13 @@ export async function getRefreshTokenByHash(db: D1Database, tokenHash: string): 
   return result;
 }
 
-export async function revokeRefreshToken(db: D1Database, id: string): Promise<boolean> {
+export async function revokeRefreshToken(db: DatabaseAdapter, id: string): Promise<boolean> {
   const now = new Date().toISOString();
   const result = await db.prepare('UPDATE refresh_tokens SET revoked_at = ? WHERE id = ?').bind(now, id).run();
   return result.meta.changes > 0;
 }
 
-export async function revokeAllUserRefreshTokens(db: D1Database, userId: string): Promise<number> {
+export async function revokeAllUserRefreshTokens(db: DatabaseAdapter, userId: string): Promise<number> {
   const now = new Date().toISOString();
   const result = await db.prepare('UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').bind(now, userId).run();
   return result.meta.changes;
@@ -234,7 +234,7 @@ export async function revokeAllUserRefreshTokens(db: D1Database, userId: string)
 
 // ============ Cleanup Queries ============
 
-export async function cleanupExpiredTokens(db: D1Database): Promise<{ apiTokens: number; refreshTokens: number }> {
+export async function cleanupExpiredTokens(db: DatabaseAdapter): Promise<{ apiTokens: number; refreshTokens: number }> {
   const now = new Date().toISOString();
 
   // Mark expired API tokens as revoked

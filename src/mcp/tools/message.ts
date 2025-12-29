@@ -1,6 +1,6 @@
 // Inter-session messaging tools
 
-import type { D1Database } from '../../db/sqlite-adapter.js';
+import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
 import { sendMessage, listMessages, getSession } from '../../db/queries';
@@ -53,7 +53,7 @@ export const messageTools: McpTool[] = [
 ];
 
 export async function handleMessageTool(
-  db: D1Database,
+  db: DatabaseAdapter,
   name: string,
   args: Record<string, unknown>
 ): Promise<McpToolResult> {

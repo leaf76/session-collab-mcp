@@ -1,5 +1,5 @@
-// SQLite adapter: wraps better-sqlite3 to match D1-like API
-// This allows the same queries.ts to work with both D1 and local SQLite
+// SQLite adapter: wraps better-sqlite3 with a generic database interface
+// This allows the same queries.ts to work with both Cloudflare D1 and local SQLite
 
 import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
@@ -14,7 +14,7 @@ if (typeof globalThis.crypto === 'undefined') {
   };
 }
 
-export interface D1Result<T> {
+export interface QueryResult<T> {
   results: T[];
   meta: {
     changes: number;
@@ -22,19 +22,19 @@ export interface D1Result<T> {
   };
 }
 
-export interface D1PreparedStatement {
-  bind(...values: unknown[]): D1PreparedStatement;
+export interface PreparedStatement {
+  bind(...values: unknown[]): PreparedStatement;
   first<T>(): Promise<T | null>;
-  all<T>(): Promise<D1Result<T>>;
+  all<T>(): Promise<QueryResult<T>>;
   run(): Promise<{ meta: { changes: number } }>;
 }
 
-export interface D1Database {
-  prepare(sql: string): D1PreparedStatement;
-  batch(statements: D1PreparedStatement[]): Promise<D1Result<unknown>[]>;
+export interface DatabaseAdapter {
+  prepare(sql: string): PreparedStatement;
+  batch(statements: PreparedStatement[]): Promise<QueryResult<unknown>[]>;
 }
 
-class SqlitePreparedStatement implements D1PreparedStatement {
+class SqlitePreparedStatement implements PreparedStatement {
   private bindings: unknown[] = [];
 
   constructor(
@@ -42,7 +42,7 @@ class SqlitePreparedStatement implements D1PreparedStatement {
     private sql: string
   ) {}
 
-  bind(...values: unknown[]): D1PreparedStatement {
+  bind(...values: unknown[]): PreparedStatement {
     this.bindings = values;
     return this;
   }
@@ -53,7 +53,7 @@ class SqlitePreparedStatement implements D1PreparedStatement {
     return result ?? null;
   }
 
-  async all<T>(): Promise<D1Result<T>> {
+  async all<T>(): Promise<QueryResult<T>> {
     const stmt = this.db.prepare(this.sql);
     const results = stmt.all(...this.bindings) as T[];
     return {
@@ -77,7 +77,7 @@ class SqlitePreparedStatement implements D1PreparedStatement {
   }
 }
 
-class SqliteDatabase implements D1Database {
+class SqliteDatabase implements DatabaseAdapter {
   private db: Database.Database;
 
   constructor(dbPath: string) {
@@ -92,11 +92,11 @@ class SqliteDatabase implements D1Database {
     this.db.pragma('foreign_keys = ON');
   }
 
-  prepare(sql: string): D1PreparedStatement {
+  prepare(sql: string): PreparedStatement {
     return new SqlitePreparedStatement(this.db, sql);
   }
 
-  async batch(statements: D1PreparedStatement[]): Promise<D1Result<unknown>[]> {
+  async batch(statements: PreparedStatement[]): Promise<QueryResult<unknown>[]> {
     const transaction = this.db.transaction(() => {
       return statements.map((stmt) => {
         const sqliteStmt = stmt as SqlitePreparedStatement;

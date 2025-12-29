@@ -1,6 +1,6 @@
 // Authentication API handlers
 
-import type { D1Database } from '../db/sqlite-adapter.js';
+import type { DatabaseAdapter } from '../db/sqlite-adapter.js';
 import { hashPassword, verifyPassword, validatePasswordStrength } from './password';
 import { createAccessToken, createRefreshToken, verifyJwt, getTokenExpiry } from './jwt';
 import {
@@ -29,7 +29,7 @@ import {
 } from './types';
 
 interface HandlerContext {
-  db: D1Database;
+  db: DatabaseAdapter;
   jwtSecret: string;
   request: Request;
 }
