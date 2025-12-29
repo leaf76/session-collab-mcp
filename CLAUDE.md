@@ -49,10 +49,11 @@ npm run test         # Run tests
 ```
 src/
 ├── cli.ts              # Entry point
-├── constants.ts        # Version info
+├── constants.ts        # Version info, server instructions
 ├── db/                 # SQLite database layer
 │   ├── queries.ts      # SQL queries
-│   └── sqlite-adapter.ts
+│   ├── sqlite-adapter.ts
+│   └── types.ts        # Database type definitions
 ├── mcp/
 │   ├── protocol.ts     # JSON-RPC protocol
 │   ├── server.ts       # MCP server
@@ -63,6 +64,8 @@ src/
 │       ├── decision.ts # Decision logging
 │       └── lsp.ts      # LSP integration
 └── utils/
+    ├── crypto.ts       # Hash utilities
+    └── response.ts     # Shared response builders
 ```
 
 ## MCP Tools Reference
@@ -111,5 +114,6 @@ SQLite database at `~/.claude/session-collab/collab.db`
 
 - Uses WAL mode for multi-process safety
 - Migrations in `migrations/` directory
+- Composite indexes for optimized queries
 - No remote server required
 - Works offline

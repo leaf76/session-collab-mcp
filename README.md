@@ -219,14 +219,16 @@ session-collab-mcp/
 │   ├── 0002_auth.sql           # Auth tables
 │   ├── 0002_session_status.sql # Session status
 │   ├── 0003_config.sql         # Session config
-│   ├── 0004_symbols.sql   # Symbol-level claims
-│   └── 0005_references.sql # Reference tracking
+│   ├── 0004_symbols.sql        # Symbol-level claims
+│   ├── 0005_references.sql     # Reference tracking
+│   └── 0006_composite_indexes.sql # Query optimization
 ├── src/
 │   ├── cli.ts             # CLI entry point
-│   ├── constants.ts       # Version and constants
+│   ├── constants.ts       # Version and server instructions
 │   ├── db/                # Database layer
 │   │   ├── queries.ts     # SQL queries
-│   │   └── sqlite-adapter.ts
+│   │   ├── sqlite-adapter.ts
+│   │   └── types.ts       # Type definitions
 │   ├── mcp/               # MCP protocol implementation
 │   │   ├── protocol.ts    # JSON-RPC handling
 │   │   ├── server.ts      # Main MCP server
@@ -237,10 +239,21 @@ session-collab-mcp/
 │   │       ├── decision.ts# Decision logging
 │   │       └── lsp.ts     # LSP integration
 │   └── utils/
+│       ├── crypto.ts      # Hash utilities
+│       └── response.ts    # Shared response builders
 └── package.json
 ```
 
 ## Changelog
+
+### v0.6.0
+
+- Optimize database queries with composite indexes
+- Extract shared utilities (crypto, response builders)
+- Remove unused auth and token modules
+- Use precompiled JS for 15x faster startup
+- Fix GROUP_CONCAT delimiter for multi-value queries
+- Add unified Zod validation across tools
 
 ### v0.5.0
 
