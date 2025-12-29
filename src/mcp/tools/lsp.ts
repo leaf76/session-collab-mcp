@@ -3,7 +3,8 @@
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol';
 import { createToolResult } from '../protocol';
-import type { SymbolType, ConflictInfo } from '../../db/types';
+import type { SymbolType, ConflictInfo, ReferenceInput } from '../../db/types';
+import { storeReferences, analyzeClaimImpact, clearSessionReferences } from '../../db/queries';
 
 // LSP Symbol Kind mapping (from LSP spec)
 const LSP_SYMBOL_KIND_MAP: Record<number, SymbolType> = {
@@ -192,6 +193,76 @@ Helps prevent claiming non-existent or misspelled symbols.`,
         },
       },
       required: ['file', 'symbols', 'lsp_symbols'],
+    },
+  },
+  {
+    name: 'collab_store_references',
+    description: `Store symbol reference data from LSP.findReferences for impact tracking.
+
+Call this after using LSP.findReferences to persist the reference data.
+This enables automatic impact warnings when other sessions claim related files.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Your session ID',
+        },
+        references: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              source_file: { type: 'string', description: 'File containing the symbol definition' },
+              source_symbol: { type: 'string', description: 'Symbol name' },
+              references: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    file: { type: 'string' },
+                    line: { type: 'number' },
+                    context: { type: 'string' },
+                  },
+                  required: ['file', 'line'],
+                },
+              },
+            },
+            required: ['source_file', 'source_symbol', 'references'],
+          },
+          description: 'Reference data from LSP.findReferences',
+        },
+        clear_existing: {
+          type: 'boolean',
+          description: 'Clear existing references from this session before storing (default: false)',
+        },
+      },
+      required: ['session_id', 'references'],
+    },
+  },
+  {
+    name: 'collab_impact_analysis',
+    description: `Analyze the impact of modifying a symbol.
+
+Returns which files reference this symbol and if any of those files have active claims.
+Use this before making changes to widely-used symbols.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Your session ID (to exclude your own claims)',
+        },
+        file: {
+          type: 'string',
+          description: 'File containing the symbol',
+        },
+        symbol: {
+          type: 'string',
+          description: 'Symbol name to analyze',
+        },
+      },
+      required: ['session_id', 'file', 'symbol'],
     },
   },
 ];
@@ -440,6 +511,100 @@ export async function handleLspTool(
             ? `All ${valid.length} symbols are valid.`
             : `${invalid.length} symbol(s) not found: ${invalid.join(', ')}`,
         })
+      );
+    }
+
+    case 'collab_store_references': {
+      const sessionId = args.session_id as string;
+      const references = args.references as ReferenceInput[];
+      const clearExisting = args.clear_existing as boolean | undefined;
+
+      if (!sessionId) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: 'session_id is required' }),
+          true
+        );
+      }
+
+      if (!references || !Array.isArray(references)) {
+        return createToolResult(
+          JSON.stringify({ error: 'INVALID_INPUT', message: 'references array is required' }),
+          true
+        );
+      }
+
+      // Clear existing references if requested
+      let cleared = 0;
+      if (clearExisting) {
+        cleared = await clearSessionReferences(db, sessionId);
+      }
+
+      // Store new references
+      const result = await storeReferences(db, sessionId, references);
+
+      return createToolResult(
+        JSON.stringify({
+          success: true,
+          stored: result.stored,
+          skipped: result.skipped,
+          cleared: cleared,
+          message: `Stored ${result.stored} references${cleared > 0 ? ` (cleared ${cleared} existing)` : ''}.`,
+        })
+      );
+    }
+
+    case 'collab_impact_analysis': {
+      const sessionId = args.session_id as string;
+      const file = args.file as string;
+      const symbol = args.symbol as string;
+
+      if (!sessionId || !file || !symbol) {
+        return createToolResult(
+          JSON.stringify({
+            error: 'INVALID_INPUT',
+            message: 'session_id, file, and symbol are required',
+          }),
+          true
+        );
+      }
+
+      const impact = await analyzeClaimImpact(db, file, symbol, sessionId);
+
+      // Determine risk level
+      let riskLevel: 'low' | 'medium' | 'high';
+      if (impact.affected_claims.length > 0) {
+        riskLevel = 'high';
+      } else if (impact.reference_count > 10) {
+        riskLevel = 'medium';
+      } else {
+        riskLevel = 'low';
+      }
+
+      // Build message
+      let message: string;
+      if (impact.affected_claims.length > 0) {
+        const claimNames = impact.affected_claims.map((c) => c.session_name ?? 'unknown').join(', ');
+        message = `⚠️ HIGH RISK: ${impact.affected_claims.length} active claim(s) on referencing files (${claimNames}). Coordinate before modifying.`;
+      } else if (impact.reference_count > 0) {
+        message = `${impact.reference_count} references across ${impact.affected_files.length} file(s). No active claims conflict.`;
+      } else {
+        message = 'No stored references found. Consider running LSP.findReferences and collab_store_references first.';
+      }
+
+      return createToolResult(
+        JSON.stringify(
+          {
+            symbol: impact.symbol,
+            file: impact.file,
+            risk_level: riskLevel,
+            reference_count: impact.reference_count,
+            affected_files: impact.affected_files,
+            affected_claims: impact.affected_claims,
+            message,
+          },
+          null,
+          2
+        )
       );
     }
 

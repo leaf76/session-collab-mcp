@@ -106,7 +106,12 @@ export class McpServer {
         result = await handleMessageTool(this.db, name, args);
       } else if (name.startsWith('collab_decision_')) {
         result = await handleDecisionTool(this.db, name, args);
-      } else if (name === 'collab_analyze_symbols' || name === 'collab_validate_symbols') {
+      } else if (
+        name === 'collab_analyze_symbols' ||
+        name === 'collab_validate_symbols' ||
+        name === 'collab_store_references' ||
+        name === 'collab_impact_analysis'
+      ) {
         result = await handleLspTool(this.db, name, args);
       } else {
         result = createToolResult(`Unknown tool: ${name}`, true);
@@ -151,7 +156,12 @@ export async function handleMcpRequest(
       return await handleMessageTool(db, name, args);
     } else if (name.startsWith('collab_decision_')) {
       return await handleDecisionTool(db, name, args);
-    } else if (name === 'collab_analyze_symbols' || name === 'collab_validate_symbols') {
+    } else if (
+      name === 'collab_analyze_symbols' ||
+      name === 'collab_validate_symbols' ||
+      name === 'collab_store_references' ||
+      name === 'collab_impact_analysis'
+    ) {
       return await handleLspTool(db, name, args);
     } else {
       return createToolResult(`Unknown tool: ${name}`, true);

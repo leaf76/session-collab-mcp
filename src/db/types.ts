@@ -139,6 +139,43 @@ export interface SymbolClaim {
   symbol_type?: SymbolType;
 }
 
+// Symbol reference for impact tracking
+export interface SymbolReference {
+  id: number;
+  source_file: string;
+  source_symbol: string;
+  ref_file: string;
+  ref_line: number | null;
+  ref_context: string | null;
+  session_id: string;
+  created_at: string;
+}
+
+// Input format for storing references
+export interface ReferenceInput {
+  source_file: string;
+  source_symbol: string;
+  references: Array<{
+    file: string;
+    line: number;
+    context?: string;
+  }>;
+}
+
+// Impact analysis result
+export interface ImpactInfo {
+  symbol: string;
+  file: string;
+  affected_claims: Array<{
+    claim_id: string;
+    session_name: string | null;
+    intent: string;
+    affected_symbols: string[];
+  }>;
+  reference_count: number;
+  affected_files: string[];
+}
+
 export interface Message {
   id: string;
   from_session_id: string;

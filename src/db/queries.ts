@@ -735,3 +735,158 @@ export async function listDecisions(
 
   return result.results;
 }
+
+// ============ Reference Queries ============
+
+import type { ReferenceInput, SymbolReference, ImpactInfo } from './types';
+
+export async function storeReferences(
+  db: DatabaseAdapter,
+  sessionId: string,
+  references: ReferenceInput[]
+): Promise<{ stored: number; skipped: number }> {
+  let stored = 0;
+  let skipped = 0;
+  const now = new Date().toISOString();
+
+  for (const ref of references) {
+    for (const r of ref.references) {
+      try {
+        await db
+          .prepare(
+            `INSERT OR IGNORE INTO symbol_references
+             (source_file, source_symbol, ref_file, ref_line, ref_context, session_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(ref.source_file, ref.source_symbol, r.file, r.line, r.context ?? null, sessionId, now)
+          .run();
+        stored++;
+      } catch {
+        skipped++;
+      }
+    }
+  }
+
+  return { stored, skipped };
+}
+
+export async function getReferencesForSymbol(
+  db: DatabaseAdapter,
+  sourceFile: string,
+  sourceSymbol: string
+): Promise<SymbolReference[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM symbol_references
+       WHERE source_file = ? AND source_symbol = ?
+       ORDER BY ref_file, ref_line`
+    )
+    .bind(sourceFile, sourceSymbol)
+    .all<SymbolReference>();
+
+  return result.results;
+}
+
+export async function getReferencesToFile(
+  db: DatabaseAdapter,
+  filePath: string
+): Promise<SymbolReference[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM symbol_references
+       WHERE ref_file = ?
+       ORDER BY source_file, source_symbol`
+    )
+    .bind(filePath)
+    .all<SymbolReference>();
+
+  return result.results;
+}
+
+export async function analyzeClaimImpact(
+  db: DatabaseAdapter,
+  sourceFile: string,
+  sourceSymbol: string,
+  excludeSessionId?: string
+): Promise<ImpactInfo> {
+  // Get all references to this symbol
+  const refs = await getReferencesForSymbol(db, sourceFile, sourceSymbol);
+
+  // Get unique files that reference this symbol
+  const affectedFiles = [...new Set(refs.map((r) => r.ref_file))];
+
+  // Check if any of these files have active claims
+  const affectedClaims: ImpactInfo['affected_claims'] = [];
+
+  if (affectedFiles.length > 0) {
+    const placeholders = affectedFiles.map(() => '?').join(',');
+    let query = `
+      SELECT DISTINCT
+        c.id as claim_id,
+        s.name as session_name,
+        c.intent,
+        cf.file_path
+      FROM claim_files cf
+      JOIN claims c ON cf.claim_id = c.id
+      JOIN sessions s ON c.session_id = s.id
+      WHERE c.status = 'active'
+        AND s.status = 'active'
+        AND cf.file_path IN (${placeholders})
+    `;
+    const bindings: string[] = [...affectedFiles];
+
+    if (excludeSessionId) {
+      query += ' AND c.session_id != ?';
+      bindings.push(excludeSessionId);
+    }
+
+    const claimResults = await db
+      .prepare(query)
+      .bind(...bindings)
+      .all<{ claim_id: string; session_name: string | null; intent: string; file_path: string }>();
+
+    // Group by claim
+    const claimMap = new Map<string, { session_name: string | null; intent: string; files: string[] }>();
+    for (const r of claimResults.results) {
+      const existing = claimMap.get(r.claim_id);
+      if (existing) {
+        existing.files.push(r.file_path);
+      } else {
+        claimMap.set(r.claim_id, {
+          session_name: r.session_name,
+          intent: r.intent,
+          files: [r.file_path],
+        });
+      }
+    }
+
+    for (const [claimId, data] of claimMap) {
+      affectedClaims.push({
+        claim_id: claimId,
+        session_name: data.session_name,
+        intent: data.intent,
+        affected_symbols: data.files,
+      });
+    }
+  }
+
+  return {
+    symbol: sourceSymbol,
+    file: sourceFile,
+    affected_claims: affectedClaims,
+    reference_count: refs.length,
+    affected_files: affectedFiles,
+  };
+}
+
+export async function clearSessionReferences(
+  db: DatabaseAdapter,
+  sessionId: string
+): Promise<number> {
+  const result = await db
+    .prepare('DELETE FROM symbol_references WHERE session_id = ?')
+    .bind(sessionId)
+    .run();
+
+  return result.meta.changes;
+}

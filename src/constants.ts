@@ -150,6 +150,55 @@ Enhanced conflict detection with LSP data:
 - **Impact awareness**: Know which files will be affected by changes
 - **Smart prioritization**: Focus on low-impact changes first
 
+## Reference Tracking & Impact Analysis
+
+Store and query symbol references for smart conflict detection:
+
+### collab_store_references
+
+Persist LSP reference data for future impact queries:
+
+\`\`\`
+1. Claude: LSP.findReferences("validateToken")
+2. Claude: collab_store_references({
+     session_id: "...",
+     references: [{
+       source_file: "src/auth.ts",
+       source_symbol: "validateToken",
+       references: [
+         { file: "src/api/users.ts", line: 15 },
+         { file: "src/api/orders.ts", line: 23 }
+       ]
+     }]
+   })
+\`\`\`
+
+### collab_impact_analysis
+
+Check if modifying a symbol would affect files claimed by others:
+
+\`\`\`
+Claude: collab_impact_analysis({
+  session_id: "...",
+  file: "src/auth.ts",
+  symbol: "validateToken"
+})
+
+Response: {
+  risk_level: "high",
+  reference_count: 3,
+  affected_files: ["src/api/users.ts", "src/api/orders.ts"],
+  affected_claims: [{ session_name: "other-session", intent: "..." }],
+  message: "HIGH RISK: 1 active claim on referencing files"
+}
+\`\`\`
+
+### Risk Levels
+
+- **high**: Other sessions have claims on files that reference this symbol
+- **medium**: Many references (>10) but no active claims conflict
+- **low**: Few references, no conflicts
+
 ## Best Practices
 
 - **Prefer symbol-level claims** for focused changes (single function/class)
