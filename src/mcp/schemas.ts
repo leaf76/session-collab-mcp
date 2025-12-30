@@ -63,6 +63,8 @@ export const configSchema = z.object({
   allow_release_others: z.boolean().optional(),
   auto_release_stale: z.boolean().optional(),
   stale_threshold_hours: z.number().min(0).optional(),
+  auto_release_immediate: z.boolean().optional(),
+  auto_release_delay_minutes: z.number().min(0).optional(),
 });
 
 // Priority schema (0-100, default 50)
@@ -99,6 +101,13 @@ export const claimReleaseSchema = z.object({
   claim_id: claimIdSchema,
   status: claimStatusSchema,
   summary: z.string().optional(),
+  force: z.boolean().optional(),
+});
+
+// Auto-release schema for releasing claims by file path after edit
+export const autoReleaseSchema = z.object({
+  session_id: sessionIdSchema,
+  file_path: z.string().min(1, 'file_path is required'),
   force: z.boolean().optional(),
 });
 

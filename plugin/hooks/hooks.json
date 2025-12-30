@@ -20,6 +20,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|mcp__filesystem__write_file|mcp__filesystem__edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Edit completed. If you have an active claim on this file and are done editing, call collab_auto_release with your session_id and the file_path to release the claim automatically.\"}'"
+          }
+        ]
+      }
     ]
   }
 }

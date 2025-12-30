@@ -40,8 +40,40 @@ This MCP server coordinates multiple Claude Code sessions working on the same co
 4. **For significant changes**: Call \`collab_claim\` before starting work
 
 5. **When done**: Call \`collab_release\` with YOUR session_id to free them
+   - Or use \`collab_auto_release\` after Edit/Write to release individual files
 
 6. **On conversation end**: Call \`collab_session_end\` to clean up
+
+## Auto-Release (NEW in 0.7.1)
+
+Automatically release claims after editing:
+
+### Immediate Release
+After Edit/Write, call \`collab_auto_release\` with:
+- \`session_id\`: Your session ID
+- \`file_path\`: The file you just edited
+- \`force\`: (optional) Force release for medium/large scope claims
+
+**Behavior by scope:**
+- \`small\`: Auto-releases immediately
+- \`medium/large\`: Requires \`force=true\` or \`auto_release_immediate\` config
+
+### Stale Claim Cleanup
+Claims are automatically cleaned up when:
+- Session has \`auto_release_stale: true\` in config
+- Claim exceeds \`stale_threshold_hours\` (default: 2 hours)
+
+### Configuration
+Use \`collab_config\` to enable auto-release:
+\`\`\`json
+{
+  "session_id": "...",
+  "auto_release_immediate": true,
+  "auto_release_stale": true,
+  "stale_threshold_hours": 2,
+  "auto_release_delay_minutes": 5
+}
+\`\`\`
 
 ## Symbol-Level Claims (Fine-Grained)
 

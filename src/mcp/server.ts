@@ -103,8 +103,8 @@ export class McpServer {
       // Route to appropriate handler
       if (name.startsWith('collab_session_') || name === 'collab_status_update' || name === 'collab_config') {
         result = await handleSessionTool(this.db, name, args, userId);
-      } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
-        // Includes: collab_claim, collab_claims_list, collab_claim_update_priority, collab_check, collab_release
+      } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release' || name === 'collab_auto_release') {
+        // Includes: collab_claim, collab_claims_list, collab_claim_update_priority, collab_check, collab_release, collab_auto_release
         result = await handleClaimTool(this.db, name, args);
       } else if (name.startsWith('collab_message_')) {
         result = await handleMessageTool(this.db, name, args);
@@ -160,8 +160,8 @@ export async function handleMcpRequest(
   try {
     if (name.startsWith('collab_session_') || name === 'collab_status_update' || name === 'collab_config') {
       return await handleSessionTool(db, name, args);
-    } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release') {
-      // Includes: collab_claim, collab_claims_list, collab_claim_update_priority, collab_check, collab_release
+    } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release' || name === 'collab_auto_release') {
+      // Includes: collab_claim, collab_claims_list, collab_claim_update_priority, collab_check, collab_release, collab_auto_release
       return await handleClaimTool(db, name, args);
     } else if (name.startsWith('collab_message_')) {
       return await handleMessageTool(db, name, args);

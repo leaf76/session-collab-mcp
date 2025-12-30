@@ -22,6 +22,8 @@ export const ERROR_CODES = {
   CANNOT_QUEUE_OWN_CLAIM: 'CANNOT_QUEUE_OWN_CLAIM',
   // Notification error codes
   NOTIFICATION_NOT_FOUND: 'NOTIFICATION_NOT_FOUND',
+  // Release error codes
+  RELEASE_FAILED: 'RELEASE_FAILED',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

@@ -5,8 +5,8 @@ import type { McpTool, McpToolResult } from '../protocol.js';
 import { createToolResult } from '../protocol.js';
 import type { SessionConfig } from '../../db/types.js';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
-import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession, updateClaimPriority, logAuditEvent, notifyQueueOnClaimRelease } from '../../db/queries.js';
-import { claimCreateSchema, claimCheckSchema, claimReleaseSchema, claimListSchema, claimUpdatePrioritySchema, validateInput } from '../schemas.js';
+import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, releaseClaimByFile, getClaimInfoByFile, getSession, updateClaimPriority, logAuditEvent, notifyQueueOnClaimRelease } from '../../db/queries.js';
+import { claimCreateSchema, claimCheckSchema, claimReleaseSchema, claimListSchema, claimUpdatePrioritySchema, autoReleaseSchema, validateInput } from '../schemas.js';
 import { getPriorityLevel } from '../../db/types.js';
 import {
   errorResponse,
@@ -184,6 +184,29 @@ export const claimTools: McpTool[] = [
         },
       },
       required: ['session_id', 'claim_id', 'priority'],
+    },
+  },
+  {
+    name: 'collab_auto_release',
+    description:
+      'Automatically release claims for a file after editing. Call this after Edit/Write operations to release the claim for the edited file. For small scope claims, releases immediately. For medium/large scope claims, requires force=true or auto_release_immediate config.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Your session ID',
+        },
+        file_path: {
+          type: 'string',
+          description: 'The file that was just edited',
+        },
+        force: {
+          type: 'boolean',
+          description: 'Force release even for medium/large scope claims',
+        },
+      },
+      required: ['session_id', 'file_path'],
     },
   },
 ];
@@ -586,6 +609,110 @@ export async function handleClaimTool(
           notified_sessions: notifiedCount,
         })
       );
+    }
+
+    case 'collab_auto_release': {
+      // Validate input with Zod schema
+      const validation = validateInput(autoReleaseSchema, args);
+      if (!validation.success) {
+        return validationError(validation.error);
+      }
+
+      const { session_id: sessionId, file_path: filePath, force } = validation.data;
+
+      // Verify session exists and is active
+      const sessionResult = await validateActiveSession(db, sessionId);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
+      }
+
+      // Get session config
+      const session = await getSession(db, sessionId);
+      let config: SessionConfig = DEFAULT_SESSION_CONFIG;
+      if (session?.config) {
+        try {
+          config = { ...DEFAULT_SESSION_CONFIG, ...JSON.parse(session.config) };
+        } catch {
+          // Use default if parse fails
+        }
+      }
+
+      // First, get claim info WITHOUT modifying anything
+      const claimInfo = await getClaimInfoByFile(db, sessionId, filePath);
+
+      if (!claimInfo) {
+        return successResponse({
+          released: false,
+          message: 'No active claim found for this file',
+          file_path: filePath,
+        });
+      }
+
+      // Check scope - only auto-release small scope unless forced or config allows
+      // For partial releases (multi-file claims), always allow removing individual files
+      const isPartialRelease = claimInfo.file_count > 1;
+      const shouldAutoRelease =
+        isPartialRelease || claimInfo.scope === 'small' || force === true || config.auto_release_immediate;
+
+      if (!shouldAutoRelease) {
+        // Don't release, just inform (claim info only, no modification)
+        return successResponse({
+          released: false,
+          claim_id: claimInfo.claim_id,
+          scope: claimInfo.scope,
+          file_path: filePath,
+          file_count: claimInfo.file_count,
+          message: `Claim has ${claimInfo.scope} scope. Use force=true or enable auto_release_immediate config to auto-release.`,
+          suggestions: [
+            'Use collab_release with claim_id to release the full claim',
+            'Use collab_config to enable auto_release_immediate',
+            'Use force=true to force auto-release',
+          ],
+        });
+      }
+
+      // Now actually release the claim
+      const result = await releaseClaimByFile(db, sessionId, filePath);
+
+      if (!result.released) {
+        return errorResponse(
+          ERROR_CODES.RELEASE_FAILED,
+          'Failed to release claim. It may have been released by another operation.'
+        );
+      }
+
+      // Log audit event for both full and partial release
+      await logAuditEvent(db, {
+        session_id: sessionId,
+        action: 'claim_released',
+        entity_type: 'claim',
+        entity_id: result.claim_id!,
+        metadata: {
+          status: result.partial ? 'partial' : 'completed',
+          files: [filePath],
+          auto_release: true,
+          partial: result.partial,
+          files_remaining: result.files_remaining,
+        },
+      });
+
+      // Notify sessions in queue if the entire claim was released
+      let notifiedCount = 0;
+      if (!result.partial) {
+        notifiedCount = await notifyQueueOnClaimRelease(db, result.claim_id!, sessionId, claimInfo.files);
+      }
+
+      return successResponse({
+        released: true,
+        claim_id: result.claim_id,
+        file_path: filePath,
+        partial: result.partial,
+        files_remaining: result.files_remaining,
+        notified_sessions: notifiedCount,
+        message: result.partial
+          ? `File released from claim. ${result.files_remaining} file(s) remaining in claim.`
+          : 'Claim released successfully.',
+      });
     }
 
     case 'collab_claims_list': {

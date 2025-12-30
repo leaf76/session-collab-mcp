@@ -242,6 +242,68 @@ export async function cleanupStaleSessions(db: DatabaseAdapter, staleMinutes: nu
   };
 }
 
+/**
+ * Cleanup stale claims based on session config.
+ * Only releases claims for sessions that have auto_release_stale=true.
+ */
+export async function cleanupStaleClaims(
+  db: DatabaseAdapter
+): Promise<{ released_claims: number; details: Array<{ claim_id: string; session_name: string | null; files: string[] }> }> {
+  const now = new Date();
+  const details: Array<{ claim_id: string; session_name: string | null; files: string[] }> = [];
+
+  // Find active sessions with auto_release_stale enabled
+  const sessions = await db
+    .prepare(
+      `SELECT id, name, config FROM sessions
+       WHERE status = 'active' AND config IS NOT NULL`
+    )
+    .all<{ id: string; name: string | null; config: string }>();
+
+  let released = 0;
+
+  for (const session of sessions.results ?? []) {
+    let config: Partial<SessionConfig> = {};
+    try {
+      config = JSON.parse(session.config || '{}');
+    } catch {
+      // Skip sessions with invalid config
+      continue;
+    }
+    if (!config.auto_release_stale) continue;
+
+    const thresholdHours = config.stale_threshold_hours ?? 2;
+    const delayMinutes = config.auto_release_delay_minutes ?? 5;
+    const cutoff = new Date(
+      now.getTime() - thresholdHours * 60 * 60 * 1000 - delayMinutes * 60 * 1000
+    ).toISOString();
+
+    // Find stale claims for this session
+    const staleClaims = await db
+      .prepare(
+        `SELECT c.id, GROUP_CONCAT(cf.file_path, '|||') as files
+         FROM claims c
+         LEFT JOIN claim_files cf ON c.id = cf.claim_id
+         WHERE c.session_id = ? AND c.status = 'active' AND c.updated_at < ?
+         GROUP BY c.id`
+      )
+      .bind(session.id, cutoff)
+      .all<{ id: string; files: string | null }>();
+
+    for (const claim of staleClaims.results ?? []) {
+      await releaseClaim(db, claim.id, { status: 'abandoned' });
+      released++;
+      details.push({
+        claim_id: claim.id,
+        session_name: session.name,
+        files: claim.files ? claim.files.split('|||') : [],
+      });
+    }
+  }
+
+  return { released_claims: released, details };
+}
+
 export async function updateSessionConfig(
   db: DatabaseAdapter,
   id: string,
@@ -605,6 +667,123 @@ export async function releaseClaim(
     .run();
 
   return result.meta.changes > 0;
+}
+
+/**
+ * Get claim info by file path without modifying anything.
+ * Use this to check claim details before deciding whether to release.
+ */
+export async function getClaimInfoByFile(
+  db: DatabaseAdapter,
+  sessionId: string,
+  filePath: string
+): Promise<{
+  claim_id: string;
+  scope: ClaimScope;
+  file_count: number;
+  files: string[];
+} | null> {
+  // Find claim containing this file for this session
+  const claim = await db
+    .prepare(
+      `SELECT c.id, c.scope
+       FROM claims c
+       JOIN claim_files cf ON c.id = cf.claim_id
+       WHERE c.session_id = ? AND c.status = 'active' AND cf.file_path = ?`
+    )
+    .bind(sessionId, filePath)
+    .first<{ id: string; scope: ClaimScope }>();
+
+  if (!claim) {
+    return null;
+  }
+
+  // Get all files in this claim
+  const filesResult = await db
+    .prepare('SELECT file_path FROM claim_files WHERE claim_id = ?')
+    .bind(claim.id)
+    .all<{ file_path: string }>();
+
+  const files = (filesResult.results ?? []).map((f) => f.file_path);
+
+  return {
+    claim_id: claim.id,
+    scope: claim.scope,
+    file_count: files.length,
+    files,
+  };
+}
+
+/**
+ * Release a claim by file path.
+ * If the claim has only one file, releases the entire claim.
+ * If the claim has multiple files, removes just the specified file from the claim.
+ */
+export async function releaseClaimByFile(
+  db: DatabaseAdapter,
+  sessionId: string,
+  filePath: string
+): Promise<{
+  released: boolean;
+  claim_id?: string;
+  scope?: ClaimScope;
+  partial?: boolean;
+  files_remaining?: number;
+}> {
+  // Find claim containing this file for this session
+  const claim = await db
+    .prepare(
+      `SELECT c.id, c.scope
+       FROM claims c
+       JOIN claim_files cf ON c.id = cf.claim_id
+       WHERE c.session_id = ? AND c.status = 'active' AND cf.file_path = ?`
+    )
+    .bind(sessionId, filePath)
+    .first<{ id: string; scope: ClaimScope }>();
+
+  if (!claim) {
+    return { released: false };
+  }
+
+  // Check how many files are in this claim
+  const fileCount = await db
+    .prepare('SELECT COUNT(*) as count FROM claim_files WHERE claim_id = ?')
+    .bind(claim.id)
+    .first<{ count: number }>();
+
+  const count = fileCount?.count ?? 0;
+
+  if (count <= 1) {
+    // Release the entire claim
+    await releaseClaim(db, claim.id, { status: 'completed' });
+    return { released: true, claim_id: claim.id, scope: claim.scope, partial: false };
+  } else {
+    // Remove just this file from the claim
+    await db
+      .prepare('DELETE FROM claim_files WHERE claim_id = ? AND file_path = ?')
+      .bind(claim.id, filePath)
+      .run();
+
+    // Also remove any symbols for this file
+    await db
+      .prepare('DELETE FROM claim_symbols WHERE claim_id = ? AND file_path = ?')
+      .bind(claim.id, filePath)
+      .run();
+
+    // Update claim's updated_at timestamp
+    await db
+      .prepare('UPDATE claims SET updated_at = ? WHERE id = ?')
+      .bind(new Date().toISOString(), claim.id)
+      .run();
+
+    return {
+      released: true,
+      claim_id: claim.id,
+      scope: claim.scope,
+      partial: true,
+      files_remaining: count - 1,
+    };
+  }
 }
 
 // ============ Message Queries ============

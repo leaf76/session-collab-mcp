@@ -11,6 +11,7 @@ import {
   updateSessionConfig,
   endSession,
   cleanupStaleSessions,
+  cleanupStaleClaims,
   listClaims,
   logAuditEvent,
   removeSessionFromAllQueues,
@@ -201,8 +202,9 @@ export async function handleSessionTool(
       }
       const input = validation.data;
 
-      // Cleanup stale sessions first
+      // Cleanup stale sessions and claims first
       await cleanupStaleSessions(db, 30);
+      await cleanupStaleClaims(db);
 
       const session = await createSession(db, {
         name: input.name,
@@ -425,6 +427,10 @@ export async function handleSessionTool(
           ? input.auto_release_stale
           : currentConfig.auto_release_stale,
         stale_threshold_hours: input.stale_threshold_hours ?? currentConfig.stale_threshold_hours,
+        auto_release_immediate: input.auto_release_immediate !== undefined
+          ? input.auto_release_immediate
+          : currentConfig.auto_release_immediate,
+        auto_release_delay_minutes: input.auto_release_delay_minutes ?? currentConfig.auto_release_delay_minutes,
       };
 
       await updateSessionConfig(db, input.session_id, newConfig);

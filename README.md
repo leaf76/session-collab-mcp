@@ -110,6 +110,15 @@ Configure behavior with `collab_config`:
 | `smart` (default) | Auto-proceed with safe content, ask for blocked |
 | `bypass` | Proceed despite conflicts (warn only) |
 
+### Auto-Release Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `auto_release_immediate` | `false` | Auto-release claims after Edit/Write |
+| `auto_release_stale` | `false` | Auto-release claims exceeding threshold |
+| `stale_threshold_hours` | `2` | Hours before claim is considered stale |
+| `auto_release_delay_minutes` | `5` | Grace period for stale release |
+
 ## MCP Tools Reference
 
 ### Session Management
@@ -130,6 +139,7 @@ Configure behavior with `collab_config`:
 | `collab_claim` | Reserve files or symbols before modifying |
 | `collab_check` | Check if files/symbols are claimed by others |
 | `collab_release` | Release claimed files/symbols |
+| `collab_auto_release` | Auto-release claims after editing a file |
 | `collab_claims_list` | List all WIP claims |
 
 ### Inter-Session Communication
@@ -242,7 +252,11 @@ session-collab-mcp/
 │   ├── 0003_config.sql         # Session config
 │   ├── 0004_symbols.sql        # Symbol-level claims
 │   ├── 0005_references.sql     # Reference tracking
-│   └── 0006_composite_indexes.sql # Query optimization
+│   ├── 0006_composite_indexes.sql # Query optimization
+│   ├── 0007_priority.sql       # Claim priority
+│   ├── 0008_history.sql        # Audit history
+│   ├── 0009_queue.sql          # Claim queue
+│   └── 0010_notifications.sql  # Notifications
 ├── plugin/                 # Claude Code Plugin
 │   ├── .claude-plugin/
 │   │   ├── plugin.json         # Plugin manifest
@@ -280,6 +294,21 @@ session-collab-mcp/
 ```
 
 ## Changelog
+
+### v0.7.1
+
+- Add `collab_auto_release` tool for releasing claims after editing
+- Add auto-release config options: `auto_release_immediate`, `auto_release_stale`
+- Add `cleanupStaleClaims()` for automatic stale claim cleanup
+- Add PostToolUse hook to remind auto-release after Edit/Write
+
+### v0.7.0
+
+- Add priority system for claims (0-100 with levels: critical/high/normal/low)
+- Add claim queue system (`collab_queue_join`, `collab_queue_leave`, `collab_queue_list`)
+- Add notification system (`collab_notifications_list`, `collab_notifications_mark_read`)
+- Add audit history tracking (`collab_history_list`)
+- Add `collab_claim_update_priority` for escalating urgent work
 
 ### v0.6.0
 

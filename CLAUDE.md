@@ -46,6 +46,9 @@ Once installed, Claude will:
 - **LSP Integration**: Validate symbols and analyze impact with LSP data
 - **Reference Tracking**: Understand impact of changes across the codebase
 - **Conflict Modes**: strict / smart (default) / bypass
+- **Auto-Release**: Automatic claim release after editing or on timeout
+- **Priority System**: Claim priority levels (critical/high/normal/low)
+- **Queue System**: Wait for blocked claims with priority ordering
 
 ## Development
 
@@ -117,7 +120,20 @@ npm run test         # Run tests
 | `collab_claim` | Reserve files or symbols before modifying |
 | `collab_check` | Check if files/symbols are claimed by others |
 | `collab_release` | Release claimed files/symbols |
+| `collab_auto_release` | Auto-release claims after editing a file |
 | `collab_claims_list` | List all active claims |
+| `collab_claim_update_priority` | Update claim priority |
+
+### Queue & Notifications
+
+| Tool | Purpose |
+|------|---------|
+| `collab_queue_join` | Join waiting queue for a blocked claim |
+| `collab_queue_leave` | Leave the waiting queue |
+| `collab_queue_list` | List queue entries |
+| `collab_notifications_list` | List notifications for your session |
+| `collab_notifications_mark_read` | Mark notifications as read |
+| `collab_history_list` | View audit history
 
 ### LSP Integration
 

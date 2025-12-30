@@ -39,7 +39,10 @@ export interface AuditMetadata {
   intent?: string;
   scope?: ClaimScope;
   priority?: number;
-  status?: ClaimStatus;
+  status?: ClaimStatus | 'partial';
+  auto_release?: boolean;
+  partial?: boolean;
+  files_remaining?: number;
 
   // Conflict actions
   conflicting_session_id?: string;
@@ -141,6 +144,10 @@ export interface SessionConfig {
   allow_release_others: boolean;
   auto_release_stale: boolean;
   stale_threshold_hours: number;
+  // Auto-release after edit completion
+  auto_release_immediate: boolean;
+  // Grace period before stale release (minutes)
+  auto_release_delay_minutes: number;
 }
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
@@ -148,6 +155,8 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   allow_release_others: false,
   auto_release_stale: false,
   stale_threshold_hours: 2,
+  auto_release_immediate: false,
+  auto_release_delay_minutes: 5,
 };
 
 export interface SessionProgress {
