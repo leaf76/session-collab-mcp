@@ -54,6 +54,7 @@ export interface AuditMetadata {
 
   // Session actions
   project_root?: string;
+  memory_count?: number;
 
   // Generic
   reason?: string;
@@ -317,6 +318,55 @@ export const SCOPE_WAIT_MINUTES: Record<ClaimScope, number> = {
 // ============ Notification Types ============
 
 export type NotificationType = 'claim_released' | 'queue_ready' | 'conflict_detected' | 'session_message';
+
+// ============ Working Memory Types ============
+
+export type MemoryCategory = 'finding' | 'decision' | 'state' | 'todo' | 'important' | 'context';
+
+export interface WorkingMemory {
+  id: number;
+  session_id: string;
+  category: MemoryCategory;
+  key: string;
+  content: string;
+  priority: number;
+  pinned: number; // 0 or 1 (SQLite boolean)
+  created_at: string;
+  updated_at: string;
+  expires_at: string | null;
+  related_claim_id: string | null;
+  related_decision_id: string | null;
+  metadata: string | null; // JSON string
+}
+
+export interface WorkingMemoryInput {
+  category: MemoryCategory;
+  key: string;
+  content: string;
+  priority?: number;
+  pinned?: boolean;
+  expires_at?: string;
+  related_claim_id?: string;
+  related_decision_id?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkingMemoryMetadata {
+  // Common fields
+  source?: string; // Where this memory came from
+  file_path?: string; // Related file
+  line_number?: number; // Related line
+
+  // For findings
+  confidence?: number; // 0-1 confidence level
+  verified?: boolean;
+
+  // For state tracking
+  previous_value?: unknown;
+
+  // Extensible
+  [key: string]: unknown;
+}
 
 export interface Notification {
   id: string;

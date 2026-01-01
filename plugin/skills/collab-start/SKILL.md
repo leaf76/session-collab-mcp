@@ -25,6 +25,7 @@ Call `mcp__session-collab__collab_session_start` with:
 Check the response for:
 - Number of active sessions
 - Other session names and their last activity time
+- `memory_hint`: Whether other sessions have working memories
 
 If other sessions are active, inform the user about potential collaboration.
 
@@ -39,7 +40,21 @@ If there are active claims:
 - Show which session holds each claim
 - Display the stated intent
 
-### Step 4: Configure Mode (Optional)
+### Step 4: Load Working Memory (Recommended)
+
+Call `mcp__session-collab__collab_memory_active` with:
+- `session_id`: Your session ID
+- `priority_threshold`: 70 (default, gets pinned + high priority memories)
+
+This retrieves important context from previous work:
+- **Findings**: Discovered facts, root causes
+- **Decisions**: Architectural choices made
+- **State**: Current status, files being worked on
+- **Important**: Critical information that must not be lost
+
+Display any relevant memories to establish context continuity.
+
+### Step 5: Configure Mode (Optional)
 
 If needed, call `mcp__session-collab__collab_config` with:
 - `session_id`: Your session ID
@@ -61,6 +76,7 @@ Provide a summary in the user's language:
 | Project Path | `/path/to/project` |
 | Active Sessions | N |
 | Active Claims | M |
+| Working Memories | K |
 
 ### Other Active Sessions (if any)
 - `session-name-1` (last active: X minutes ago)
@@ -69,8 +85,12 @@ Provide a summary in the user's language:
 ### Active Claims (if any)
 - `file.ts` - claimed by `other-session` for "intent description"
 
+### Previous Context (if any memories found)
+Display relevant findings, decisions, or important notes from working memory.
+
 ### Reminders
 - Always call `collab_check` before editing files
 - Use `collab_claim` to reserve files before modification
+- Use `collab_memory_save` to persist important findings/decisions
 - Call `collab_release` when done with files
 - Call `collab_session_end` when conversation ends

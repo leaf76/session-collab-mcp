@@ -5,7 +5,7 @@ import type { McpTool, McpToolResult } from '../protocol.js';
 import { createToolResult } from '../protocol.js';
 import type { SessionConfig } from '../../db/types.js';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
-import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, releaseClaimByFile, getClaimInfoByFile, getSession, updateClaimPriority, logAuditEvent, notifyQueueOnClaimRelease } from '../../db/queries.js';
+import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, releaseClaimByFile, getClaimInfoByFile, getSession, updateClaimPriority, logAuditEvent, notifyQueueOnClaimRelease, saveMemory, clearMemory, registerPlan } from '../../db/queries.js';
 import { claimCreateSchema, claimCheckSchema, claimReleaseSchema, claimListSchema, claimUpdatePrioritySchema, autoReleaseSchema, validateInput } from '../schemas.js';
 import { getPriorityLevel } from '../../db/types.js';
 import {
@@ -263,6 +263,46 @@ export async function handleClaimTool(
         metadata: { files: fileList, intent, scope, priority },
       });
 
+      // Auto-save claim info to working memory for context persistence
+      await saveMemory(db, sessionId, {
+        category: 'state',
+        key: `claim_${claim.id}`,
+        content: `Working on: ${intent}\nFiles: ${fileList.join(', ')}${hasSymbols ? `\nSymbols: ${symbols!.map(s => `${s.file}:[${s.symbols.join(',')}]`).join(', ')}` : ''}`,
+        priority: 60,
+        related_claim_id: claim.id,
+        metadata: {
+          claim_id: claim.id,
+          files: fileList,
+          symbols: hasSymbols ? symbols : undefined,
+          scope,
+        },
+      });
+
+      // AUTO-REGISTER: Detect and register plan files automatically
+      const autoRegistered: string[] = [];
+      for (const file of fileList) {
+        const lowerFile = file.toLowerCase();
+        // Detect plan-like files: *.md files with plan/design/spec/proposal in name or path
+        const isPlanLike = (lowerFile.endsWith('.md') || lowerFile.endsWith('.txt')) &&
+          (lowerFile.includes('plan') || lowerFile.includes('design') ||
+           lowerFile.includes('spec') || lowerFile.includes('proposal') ||
+           lowerFile.includes('rfc') || lowerFile.includes('adr'));
+
+        if (isPlanLike) {
+          try {
+            await registerPlan(db, sessionId, {
+              file_path: file,
+              title: `Plan: ${file.split('/').pop() || file}`,
+              content_summary: intent,
+              status: 'in_progress',
+            });
+            autoRegistered.push(file);
+          } catch {
+            // Ignore if already registered
+          }
+        }
+      }
+
       // Check for conflicts AFTER creating claim
       // This eliminates race condition: if two sessions claim simultaneously,
       // both will see each other's claims and can coordinate
@@ -312,6 +352,7 @@ export async function handleClaimTool(
               symbols: hasSymbols ? symbols : undefined,
               conflicts: conflictDetails,
               warning: `⚠️ Conflicts detected: ${fileConflicts.length} file-level, ${symbolConflicts.length} symbol-level. Coordinate before proceeding.`,
+              auto_registered_plans: autoRegistered.length > 0 ? autoRegistered : undefined,
             },
             null,
             2
@@ -331,6 +372,10 @@ export async function handleClaimTool(
           message: hasSymbols
             ? 'Symbol-level claim created. Other sessions can work on different symbols in the same file.'
             : 'Claim created successfully. Other sessions will be warned about these files.',
+          auto_registered_plans: autoRegistered.length > 0 ? autoRegistered : undefined,
+          auto_registered_note: autoRegistered.length > 0
+            ? `Auto-protected ${autoRegistered.length} plan file(s). Use collab_plan_update_status to manage lifecycle.`
+            : undefined,
         })
       );
     }
@@ -593,6 +638,24 @@ export async function handleClaimTool(
         entity_id: claimId,
         metadata: { status, files: claim.files },
       });
+
+      // Clear claim-related memory when releasing
+      await clearMemory(db, claim.session_id, { key: `claim_${claimId}` });
+
+      // If completed with summary, save as a decision/finding for future reference
+      if (status === 'completed' && summary) {
+        await saveMemory(db, sessionId, {
+          category: 'decision',
+          key: `completed_${claimId}`,
+          content: `Completed: ${claim.intent}\nSummary: ${summary}\nFiles: ${claim.files.join(', ')}`,
+          priority: 50,
+          metadata: {
+            claim_id: claimId,
+            files: claim.files,
+            completed_at: new Date().toISOString(),
+          },
+        });
+      }
 
       // Notify sessions in queue that the claim is released
       const notifiedCount = await notifyQueueOnClaimRelease(db, claimId, sessionId, claim.files);

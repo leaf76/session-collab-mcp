@@ -15,6 +15,9 @@ import {
   listClaims,
   logAuditEvent,
   removeSessionFromAllQueues,
+  getActiveMemories,
+  recallMemory,
+  saveMemory,
 } from '../../db/queries.js';
 import type { TodoItem, SessionConfig } from '../../db/types.js';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
@@ -224,6 +227,55 @@ export async function handleSessionTool(
 
       const activeSessions = await listSessions(db, { project_root: input.project_root, user_id: userId });
 
+      // AUTO-LOAD: Collect active memories from all sessions in this project
+      const allMemories: Array<{
+        session_name: string | null;
+        category: string;
+        key: string;
+        content: string;
+        priority: number;
+        pinned: boolean;
+      }> = [];
+
+      for (const otherSession of activeSessions) {
+        const memories = await getActiveMemories(db, otherSession.id, {
+          priority_threshold: 70,
+          max_items: 10
+        });
+        for (const mem of memories) {
+          allMemories.push({
+            session_name: otherSession.name,
+            category: mem.category,
+            key: mem.key,
+            content: mem.content,
+            priority: mem.priority,
+            pinned: mem.pinned === 1,
+          });
+        }
+      }
+
+      // Sort by priority and pinned status
+      allMemories.sort((a, b) => {
+        if (a.pinned !== b.pinned) return b.pinned ? 1 : -1;
+        return b.priority - a.priority;
+      });
+
+      // Limit to top 20 memories
+      const topMemories = allMemories.slice(0, 20);
+
+      // Group by category for easier reading
+      const memoriesByCategory: Record<string, Array<{ key: string; content: string; session: string | null }>> = {};
+      for (const mem of topMemories) {
+        if (!memoriesByCategory[mem.category]) {
+          memoriesByCategory[mem.category] = [];
+        }
+        memoriesByCategory[mem.category].push({
+          key: mem.key,
+          content: mem.content,
+          session: mem.session_name,
+        });
+      }
+
       return createToolResult(
         JSON.stringify(
           {
@@ -235,6 +287,13 @@ export async function handleSessionTool(
               name: s.name,
               last_heartbeat: s.last_heartbeat,
             })),
+            // AUTO-LOADED CONTEXT
+            restored_context: topMemories.length > 0 ? {
+              count: topMemories.length,
+              by_category: memoriesByCategory,
+              note: 'These memories were automatically loaded from previous sessions. Use them to maintain context continuity.',
+            } : null,
+            tip: 'Use collab_memory_save to persist important context. Plans and files are auto-protected when registered.',
           },
           null,
           2
@@ -254,6 +313,52 @@ export async function handleSessionTool(
         return sessionResult.error;
       }
 
+      // Generate memory summary before ending session
+      const memories = await recallMemory(db, input.session_id, {});
+      let memorySummary: {
+        total: number;
+        findings: string[];
+        decisions: string[];
+        important: string[];
+      } | null = null;
+
+      if (memories.length > 0) {
+        // Group memories by category for summary
+        const findings = memories.filter(m => m.category === 'finding').map(m => m.content);
+        const decisions = memories.filter(m => m.category === 'decision').map(m => m.content);
+        const important = memories.filter(m => m.category === 'important' || m.pinned === 1).map(m => m.content);
+
+        memorySummary = {
+          total: memories.length,
+          findings: findings.slice(0, 5), // Top 5
+          decisions: decisions.slice(0, 5),
+          important: important.slice(0, 5),
+        };
+
+        // Save session summary as a persistent record
+        const summaryContent = [
+          `Session: ${sessionResult.session.name || input.session_id}`,
+          `Ended: ${new Date().toISOString()}`,
+          findings.length > 0 ? `\nFindings:\n- ${findings.slice(0, 5).join('\n- ')}` : '',
+          decisions.length > 0 ? `\nDecisions:\n- ${decisions.slice(0, 5).join('\n- ')}` : '',
+          important.length > 0 ? `\nImportant:\n- ${important.slice(0, 5).join('\n- ')}` : '',
+        ].filter(Boolean).join('\n');
+
+        // Save summary with high priority so it can be found by future sessions
+        await saveMemory(db, input.session_id, {
+          category: 'context',
+          key: 'session_summary',
+          content: summaryContent,
+          priority: 80,
+          pinned: true,
+          metadata: {
+            session_name: sessionResult.session.name,
+            ended_at: new Date().toISOString(),
+            memory_count: memories.length,
+          },
+        });
+      }
+
       // Remove from all queues first
       const removedFromQueues = await removeSessionFromAllQueues(db, input.session_id);
 
@@ -266,12 +371,13 @@ export async function handleSessionTool(
         action: 'session_ended',
         entity_type: 'session',
         entity_id: input.session_id,
-        metadata: { status: claimStatus },
+        metadata: { status: claimStatus, memory_count: memories.length },
       });
 
       return successResponse({
         success: true,
         message: `Session ended. All claims marked as ${input.release_claims === 'complete' ? 'completed' : 'abandoned'}.${removedFromQueues > 0 ? ` Removed from ${removedFromQueues} queue(s).` : ''}`,
+        memory_summary: memorySummary,
       });
     }
 

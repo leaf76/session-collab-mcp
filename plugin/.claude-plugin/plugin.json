@@ -1,7 +1,7 @@
 {
   "name": "session-collab",
-  "version": "0.6.0",
-  "description": "Multi-session collaboration for Claude Code - prevents conflicts when multiple sessions work on the same codebase",
+  "version": "0.8.0",
+  "description": "Multi-session collaboration for Claude Code - prevents conflicts, persists context, and protects important files",
   "author": {
     "name": "cy76",
     "email": "cy76@example.com"
@@ -14,6 +14,9 @@
     "session",
     "conflict-detection",
     "multi-session",
-    "mcp"
+    "mcp",
+    "context-persistence",
+    "working-memory",
+    "plan-protection"
   ]
 }

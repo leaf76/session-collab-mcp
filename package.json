@@ -1,7 +1,7 @@
 {
   "name": "session-collab-mcp",
-  "version": "0.7.1",
-  "description": "MCP server for Claude Code session collaboration - prevents conflicts between parallel sessions",
+  "version": "0.8.0",
+  "description": "MCP server for Claude Code session collaboration - prevents conflicts, persists context, and protects important files",
   "license": "MIT",
   "keywords": [
     "mcp",

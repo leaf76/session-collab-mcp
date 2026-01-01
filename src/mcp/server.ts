@@ -23,6 +23,8 @@ import { lspTools, handleLspTool } from './tools/lsp';
 import { historyTools, handleHistoryTool } from './tools/history';
 import { queueTools, handleQueueTool } from './tools/queue';
 import { notificationTools, handleNotificationTool } from './tools/notification';
+import { memoryTools, handleMemoryTool } from './tools/memory';
+import { protectionTools, handleProtectionTool } from './tools/protection';
 import type { AuthContext } from '../auth/types';
 import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from '../constants.js';
 
@@ -36,7 +38,7 @@ const CAPABILITIES: McpCapabilities = {
 };
 
 // Combine all tools
-const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools, ...lspTools, ...historyTools, ...queueTools, ...notificationTools];
+const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools, ...lspTools, ...historyTools, ...queueTools, ...notificationTools, ...memoryTools, ...protectionTools];
 
 export class McpServer {
   private authContext?: AuthContext;
@@ -123,6 +125,10 @@ export class McpServer {
         result = await handleQueueTool(this.db, name, args);
       } else if (name.startsWith('collab_notifications_')) {
         result = await handleNotificationTool(this.db, name, args);
+      } else if (name.startsWith('collab_memory_')) {
+        result = await handleMemoryTool(this.db, name, args);
+      } else if (name.startsWith('collab_plan_') || name.startsWith('collab_file_')) {
+        result = await handleProtectionTool(this.db, name, args);
       } else {
         result = createToolResult(`Unknown tool: ${name}`, true);
       }
@@ -180,6 +186,10 @@ export async function handleMcpRequest(
       return await handleQueueTool(db, name, args);
     } else if (name.startsWith('collab_notifications_')) {
       return await handleNotificationTool(db, name, args);
+    } else if (name.startsWith('collab_memory_')) {
+      return await handleMemoryTool(db, name, args);
+    } else if (name.startsWith('collab_plan_') || name.startsWith('collab_file_')) {
+      return await handleProtectionTool(db, name, args);
     } else {
       return createToolResult(`Unknown tool: ${name}`, true);
     }

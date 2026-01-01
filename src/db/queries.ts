@@ -1370,7 +1370,14 @@ export async function getQueuedSessionsForClaim(
 
 // ============ Notification Queries ============
 
-import type { Notification, NotificationType, NotificationMetadata } from './types';
+import type {
+  Notification,
+  NotificationType,
+  NotificationMetadata,
+  WorkingMemory,
+  WorkingMemoryInput,
+  MemoryCategory,
+} from './types';
 
 export async function createNotification(
   db: DatabaseAdapter,
@@ -1517,4 +1524,627 @@ export async function notifyQueueOnClaimRelease(
   }
 
   return notified;
+}
+
+// ============ Working Memory Queries ============
+
+export async function saveMemory(
+  db: DatabaseAdapter,
+  sessionId: string,
+  input: WorkingMemoryInput
+): Promise<WorkingMemory> {
+  const now = new Date().toISOString();
+  const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null;
+
+  // Use INSERT OR REPLACE to update if exists
+  await db
+    .prepare(
+      `INSERT INTO working_memory
+       (session_id, category, key, content, priority, pinned, created_at, updated_at, expires_at, related_claim_id, related_decision_id, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id, category, key) DO UPDATE SET
+         content = excluded.content,
+         priority = excluded.priority,
+         pinned = excluded.pinned,
+         updated_at = excluded.updated_at,
+         expires_at = excluded.expires_at,
+         related_claim_id = excluded.related_claim_id,
+         related_decision_id = excluded.related_decision_id,
+         metadata = excluded.metadata`
+    )
+    .bind(
+      sessionId,
+      input.category,
+      input.key,
+      input.content,
+      input.priority ?? 50,
+      input.pinned ? 1 : 0,
+      now,
+      now,
+      input.expires_at ?? null,
+      input.related_claim_id ?? null,
+      input.related_decision_id ?? null,
+      metadataJson
+    )
+    .run();
+
+  // Fetch the saved/updated record
+  const result = await db
+    .prepare('SELECT * FROM working_memory WHERE session_id = ? AND category = ? AND key = ?')
+    .bind(sessionId, input.category, input.key)
+    .first<WorkingMemory>();
+
+  return result!;
+}
+
+export async function recallMemory(
+  db: DatabaseAdapter,
+  sessionId: string,
+  params: {
+    category?: MemoryCategory;
+    key?: string;
+    pinned_only?: boolean;
+    limit?: number;
+    include_expired?: boolean;
+  } = {}
+): Promise<WorkingMemory[]> {
+  let query = 'SELECT * FROM working_memory WHERE session_id = ?';
+  const bindings: (string | number)[] = [sessionId];
+
+  if (params.category) {
+    query += ' AND category = ?';
+    bindings.push(params.category);
+  }
+
+  if (params.key) {
+    query += ' AND key = ?';
+    bindings.push(params.key);
+  }
+
+  if (params.pinned_only) {
+    query += ' AND pinned = 1';
+  }
+
+  if (!params.include_expired) {
+    query += ' AND (expires_at IS NULL OR expires_at > ?)';
+    bindings.push(new Date().toISOString());
+  }
+
+  query += ' ORDER BY pinned DESC, priority DESC, updated_at DESC';
+
+  if (params.limit) {
+    query += ' LIMIT ?';
+    bindings.push(params.limit);
+  }
+
+  const result = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<WorkingMemory>();
+
+  return result.results;
+}
+
+export async function updateMemory(
+  db: DatabaseAdapter,
+  sessionId: string,
+  key: string,
+  updates: {
+    content?: string;
+    priority?: number;
+    pinned?: boolean;
+    expires_at?: string | null;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const setParts: string[] = ['updated_at = ?'];
+  const bindings: (string | number | null)[] = [now];
+
+  if (updates.content !== undefined) {
+    setParts.push('content = ?');
+    bindings.push(updates.content);
+  }
+
+  if (updates.priority !== undefined) {
+    setParts.push('priority = ?');
+    bindings.push(updates.priority);
+  }
+
+  if (updates.pinned !== undefined) {
+    setParts.push('pinned = ?');
+    bindings.push(updates.pinned ? 1 : 0);
+  }
+
+  if (updates.expires_at !== undefined) {
+    setParts.push('expires_at = ?');
+    bindings.push(updates.expires_at);
+  }
+
+  if (updates.metadata !== undefined) {
+    setParts.push('metadata = ?');
+    bindings.push(JSON.stringify(updates.metadata));
+  }
+
+  bindings.push(sessionId, key);
+
+  const result = await db
+    .prepare(`UPDATE working_memory SET ${setParts.join(', ')} WHERE session_id = ? AND key = ?`)
+    .bind(...bindings)
+    .run();
+
+  return result.meta.changes > 0;
+}
+
+export async function clearMemory(
+  db: DatabaseAdapter,
+  sessionId: string,
+  params: {
+    key?: string;
+    category?: MemoryCategory;
+    clear_all?: boolean;
+  } = {}
+): Promise<number> {
+  if (params.key) {
+    // Clear specific key
+    const result = await db
+      .prepare('DELETE FROM working_memory WHERE session_id = ? AND key = ?')
+      .bind(sessionId, params.key)
+      .run();
+    return result.meta.changes;
+  }
+
+  if (params.category) {
+    // Clear entire category
+    const result = await db
+      .prepare('DELETE FROM working_memory WHERE session_id = ? AND category = ?')
+      .bind(sessionId, params.category)
+      .run();
+    return result.meta.changes;
+  }
+
+  if (params.clear_all) {
+    // Clear all memory for session
+    const result = await db
+      .prepare('DELETE FROM working_memory WHERE session_id = ?')
+      .bind(sessionId)
+      .run();
+    return result.meta.changes;
+  }
+
+  return 0;
+}
+
+export async function pinMemory(
+  db: DatabaseAdapter,
+  sessionId: string,
+  key: string,
+  pinned: boolean
+): Promise<boolean> {
+  const now = new Date().toISOString();
+
+  const result = await db
+    .prepare('UPDATE working_memory SET pinned = ?, updated_at = ? WHERE session_id = ? AND key = ?')
+    .bind(pinned ? 1 : 0, now, sessionId, key)
+    .run();
+
+  return result.meta.changes > 0;
+}
+
+export async function cleanupExpiredMemory(
+  db: DatabaseAdapter
+): Promise<number> {
+  const now = new Date().toISOString();
+
+  const result = await db
+    .prepare('DELETE FROM working_memory WHERE expires_at IS NOT NULL AND expires_at < ?')
+    .bind(now)
+    .run();
+
+  return result.meta.changes;
+}
+
+export async function getMemoryStats(
+  db: DatabaseAdapter,
+  sessionId: string
+): Promise<{
+  total: number;
+  by_category: Record<string, number>;
+  pinned_count: number;
+}> {
+  const totalResult = await db
+    .prepare('SELECT COUNT(*) as count FROM working_memory WHERE session_id = ?')
+    .bind(sessionId)
+    .first<{ count: number }>();
+
+  const categoryResult = await db
+    .prepare(
+      `SELECT category, COUNT(*) as count
+       FROM working_memory
+       WHERE session_id = ?
+       GROUP BY category`
+    )
+    .bind(sessionId)
+    .all<{ category: string; count: number }>();
+
+  const pinnedResult = await db
+    .prepare('SELECT COUNT(*) as count FROM working_memory WHERE session_id = ? AND pinned = 1')
+    .bind(sessionId)
+    .first<{ count: number }>();
+
+  const byCategory: Record<string, number> = {};
+  for (const row of categoryResult.results) {
+    byCategory[row.category] = row.count;
+  }
+
+  return {
+    total: totalResult?.count ?? 0,
+    by_category: byCategory,
+    pinned_count: pinnedResult?.count ?? 0,
+  };
+}
+
+/**
+ * Get all pinned and high-priority memories for injection into context.
+ * This is the main function used for automatic context restoration.
+ */
+export async function getActiveMemories(
+  db: DatabaseAdapter,
+  sessionId: string,
+  params: {
+    priority_threshold?: number;
+    max_items?: number;
+  } = {}
+): Promise<WorkingMemory[]> {
+  const threshold = params.priority_threshold ?? 70;
+  const limit = params.max_items ?? 20;
+  const now = new Date().toISOString();
+
+  const result = await db
+    .prepare(
+      `SELECT * FROM working_memory
+       WHERE session_id = ?
+         AND (pinned = 1 OR priority >= ?)
+         AND (expires_at IS NULL OR expires_at > ?)
+       ORDER BY pinned DESC, priority DESC, updated_at DESC
+       LIMIT ?`
+    )
+    .bind(sessionId, threshold, now, limit)
+    .all<WorkingMemory>();
+
+  return result.results;
+}
+
+// ============ Phase 3: Plan & File Protection ============
+
+export type PlanStatus = 'draft' | 'approved' | 'in_progress' | 'completed' | 'archived';
+
+export interface PlanInfo {
+  file_path: string;
+  title: string;
+  status: PlanStatus;
+  content_summary: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+/**
+ * Register a plan document for protection.
+ * Plans are automatically pinned and have high priority.
+ */
+export async function registerPlan(
+  db: DatabaseAdapter,
+  sessionId: string,
+  params: {
+    file_path: string;
+    title: string;
+    content_summary: string;
+    status?: PlanStatus;
+  }
+): Promise<WorkingMemory> {
+  const key = `plan:${params.file_path}`;
+  const status = params.status ?? 'draft';
+
+  return saveMemory(db, sessionId, {
+    category: 'important',
+    key,
+    content: `[PLAN] ${params.title}\nStatus: ${status}\n\n${params.content_summary}`,
+    priority: 95, // Very high priority for plans
+    pinned: true,
+    metadata: {
+      type: 'plan',
+      file_path: params.file_path,
+      title: params.title,
+      status,
+    },
+  });
+}
+
+/**
+ * Update plan status (e.g., draft → approved → in_progress → completed)
+ */
+export async function updatePlanStatus(
+  db: DatabaseAdapter,
+  sessionId: string,
+  filePath: string,
+  newStatus: PlanStatus,
+  summary?: string
+): Promise<boolean> {
+  const key = `plan:${filePath}`;
+
+  // Get current memory
+  const memories = await recallMemory(db, sessionId, { key });
+  if (memories.length === 0) return false;
+
+  const current = memories[0];
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = current.metadata ? JSON.parse(current.metadata) : {};
+  } catch {
+    // ignore
+  }
+
+  metadata.status = newStatus;
+  if (newStatus === 'completed') {
+    metadata.completed_at = new Date().toISOString();
+  }
+
+  // Adjust priority based on status
+  let priority = 95;
+  let pinned = true;
+  if (newStatus === 'completed') {
+    priority = 50; // Reduce priority but keep in memory
+    pinned = false;
+  } else if (newStatus === 'archived') {
+    priority = 30; // Low priority for archived
+    pinned = false;
+  }
+
+  const updatedContent = summary
+    ? `[PLAN] ${metadata.title}\nStatus: ${newStatus}\n\n${summary}`
+    : current.content.replace(/Status: \w+/, `Status: ${newStatus}`);
+
+  return updateMemory(db, sessionId, key, {
+    content: updatedContent,
+    priority,
+    pinned,
+    metadata,
+  });
+}
+
+/**
+ * Get plan info by file path
+ */
+export async function getPlan(
+  db: DatabaseAdapter,
+  sessionId: string,
+  filePath: string
+): Promise<PlanInfo | null> {
+  const key = `plan:${filePath}`;
+  const memories = await recallMemory(db, sessionId, { key });
+
+  if (memories.length === 0) return null;
+
+  const memory = memories[0];
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = memory.metadata ? JSON.parse(memory.metadata) : {};
+  } catch {
+    // ignore
+  }
+
+  return {
+    file_path: filePath,
+    title: (metadata.title as string) ?? 'Untitled Plan',
+    status: (metadata.status as PlanStatus) ?? 'draft',
+    content_summary: memory.content,
+    created_at: memory.created_at,
+    updated_at: memory.updated_at,
+    completed_at: metadata.completed_at as string | undefined,
+  };
+}
+
+/**
+ * List all plans for a session
+ */
+export async function listPlans(
+  db: DatabaseAdapter,
+  sessionId: string,
+  params: {
+    status?: PlanStatus;
+    include_archived?: boolean;
+  } = {}
+): Promise<PlanInfo[]> {
+  const now = new Date().toISOString();
+
+  let query = `
+    SELECT * FROM working_memory
+    WHERE session_id = ?
+      AND key LIKE 'plan:%'
+      AND (expires_at IS NULL OR expires_at > ?)
+  `;
+  const bindings: (string | number)[] = [sessionId, now];
+
+  if (params.status) {
+    query += ` AND json_extract(metadata, '$.status') = ?`;
+    bindings.push(params.status);
+  }
+
+  if (!params.include_archived) {
+    query += ` AND json_extract(metadata, '$.status') != 'archived'`;
+  }
+
+  query += ' ORDER BY pinned DESC, priority DESC, updated_at DESC';
+
+  const result = await db.prepare(query).bind(...bindings).all<WorkingMemory>();
+
+  return result.results.map((memory) => {
+    let metadata: Record<string, unknown> = {};
+    try {
+      metadata = memory.metadata ? JSON.parse(memory.metadata) : {};
+    } catch {
+      // ignore
+    }
+
+    return {
+      file_path: (metadata.file_path as string) ?? memory.key.replace('plan:', ''),
+      title: (metadata.title as string) ?? 'Untitled Plan',
+      status: (metadata.status as PlanStatus) ?? 'draft',
+      content_summary: memory.content,
+      created_at: memory.created_at,
+      updated_at: memory.updated_at,
+      completed_at: metadata.completed_at as string | undefined,
+    };
+  });
+}
+
+/**
+ * Register a file created in this session for protection.
+ */
+export async function registerCreatedFile(
+  db: DatabaseAdapter,
+  sessionId: string,
+  params: {
+    file_path: string;
+    file_type?: 'plan' | 'code' | 'config' | 'doc' | 'other';
+    description?: string;
+  }
+): Promise<WorkingMemory> {
+  const key = `created_file:${params.file_path}`;
+  const fileType = params.file_type ?? 'other';
+
+  // Plans get higher priority
+  const priority = fileType === 'plan' ? 90 : 70;
+  const pinned = fileType === 'plan';
+
+  return saveMemory(db, sessionId, {
+    category: 'state',
+    key,
+    content: `Created file: ${params.file_path}${params.description ? `\n${params.description}` : ''}`,
+    priority,
+    pinned,
+    metadata: {
+      type: 'created_file',
+      file_path: params.file_path,
+      file_type: fileType,
+      created_at: new Date().toISOString(),
+    },
+  });
+}
+
+/**
+ * Get all files created in this session
+ */
+export async function getCreatedFiles(
+  db: DatabaseAdapter,
+  sessionId: string
+): Promise<Array<{ file_path: string; file_type: string; created_at: string }>> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM working_memory
+       WHERE session_id = ?
+         AND key LIKE 'created_file:%'
+       ORDER BY created_at DESC`
+    )
+    .bind(sessionId)
+    .all<WorkingMemory>();
+
+  return result.results.map((memory) => {
+    let metadata: Record<string, unknown> = {};
+    try {
+      metadata = memory.metadata ? JSON.parse(memory.metadata) : {};
+    } catch {
+      // ignore
+    }
+
+    return {
+      file_path: (metadata.file_path as string) ?? memory.key.replace('created_file:', ''),
+      file_type: (metadata.file_type as string) ?? 'other',
+      created_at: (metadata.created_at as string) ?? memory.created_at,
+    };
+  });
+}
+
+/**
+ * Check if a file is protected (either a plan or created in this session)
+ */
+export async function isFileProtected(
+  db: DatabaseAdapter,
+  sessionId: string,
+  filePath: string
+): Promise<{
+  protected: boolean;
+  reason?: 'plan' | 'created_file';
+  details?: PlanInfo | { file_type: string; created_at: string };
+}> {
+  // Check if it's a plan
+  const plan = await getPlan(db, sessionId, filePath);
+  if (plan && plan.status !== 'archived') {
+    return {
+      protected: true,
+      reason: 'plan',
+      details: plan,
+    };
+  }
+
+  // Check if it's a created file
+  const createdFiles = await getCreatedFiles(db, sessionId);
+  const createdFile = createdFiles.find((f) => f.file_path === filePath);
+  if (createdFile) {
+    return {
+      protected: true,
+      reason: 'created_file',
+      details: {
+        file_type: createdFile.file_type,
+        created_at: createdFile.created_at,
+      },
+    };
+  }
+
+  return { protected: false };
+}
+
+/**
+ * Get all protected files in a session
+ */
+export async function getProtectedFiles(
+  db: DatabaseAdapter,
+  sessionId: string
+): Promise<Array<{
+  file_path: string;
+  protection_type: 'plan' | 'created_file';
+  priority: number;
+  pinned: boolean;
+}>> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM working_memory
+       WHERE session_id = ?
+         AND (key LIKE 'plan:%' OR key LIKE 'created_file:%')
+         AND (
+           json_extract(metadata, '$.status') IS NULL
+           OR json_extract(metadata, '$.status') != 'archived'
+         )
+       ORDER BY priority DESC, pinned DESC`
+    )
+    .bind(sessionId)
+    .all<WorkingMemory>();
+
+  return result.results.map((memory) => {
+    let metadata: Record<string, unknown> = {};
+    try {
+      metadata = memory.metadata ? JSON.parse(memory.metadata) : {};
+    } catch {
+      // ignore
+    }
+
+    const isPlan = memory.key.startsWith('plan:');
+    return {
+      file_path: (metadata.file_path as string) ?? memory.key.replace(/^(plan|created_file):/, ''),
+      protection_type: isPlan ? 'plan' : 'created_file',
+      priority: memory.priority,
+      pinned: memory.pinned === 1,
+    };
+  });
 }

@@ -24,6 +24,9 @@ export const ERROR_CODES = {
   NOTIFICATION_NOT_FOUND: 'NOTIFICATION_NOT_FOUND',
   // Release error codes
   RELEASE_FAILED: 'RELEASE_FAILED',
+  // Memory error codes
+  MEMORY_NOT_FOUND: 'MEMORY_NOT_FOUND',
+  UNKNOWN_TOOL: 'UNKNOWN_TOOL',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

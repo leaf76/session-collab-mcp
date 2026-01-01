@@ -286,6 +286,191 @@ Use \`collab_history_list\` to debug coordination issues:
 
 Filter by session, action type, or date range. Entries auto-deleted after 7 days.
 
+## Working Memory (Context Persistence)
+
+Persist important context to survive Claude's automatic compaction/summarization.
+
+### When to Use
+
+- **Findings**: Important discoveries during investigation
+- **Decisions**: Choices made and their rationale
+- **State**: Current status, file paths, variable values
+- **Context**: General context that should be remembered
+
+### Save Important Context
+
+\`\`\`
+collab_memory_save({
+  session_id: "...",
+  category: "finding",
+  key: "auth_bug_root_cause",
+  content: "JWT validation skipped in middleware due to order issue",
+  priority: 80,
+  pinned: true
+})
+\`\`\`
+
+### Recall Context
+
+\`\`\`
+collab_memory_recall({
+  session_id: "...",
+  category: "finding"  // optional filter
+})
+\`\`\`
+
+### Get Active Memories
+
+Get all pinned + high-priority memories for context restoration:
+
+\`\`\`
+collab_memory_active({
+  session_id: "...",
+  priority_threshold: 70
+})
+\`\`\`
+
+### Memory Categories
+
+- **finding**: Discovered facts, root causes, patterns
+- **decision**: Architectural choices, implementation decisions
+- **state**: Current file, line number, tracking variables
+- **todo**: Pending work items, follow-ups
+- **important**: Critical information that must not be lost
+- **context**: General context for understanding
+
+### Priority Levels
+
+- **90-100**: Critical - always recall
+- **70-89**: High - recall by default
+- **50-69**: Normal - recall on demand
+- **0-49**: Low - background context
+
+### Pinned Memories
+
+Pin critical memories to ensure they are always loaded:
+
+\`\`\`
+collab_memory_pin({
+  session_id: "...",
+  key: "root_cause",
+  pinned: true
+})
+\`\`\`
+
+### Memory Tools
+
+| Tool | Purpose |
+|------|---------|
+| \`collab_memory_save\` | Save important context |
+| \`collab_memory_recall\` | Retrieve saved memories |
+| \`collab_memory_update\` | Update existing memory |
+| \`collab_memory_clear\` | Clear memories |
+| \`collab_memory_pin\` | Pin/unpin a memory |
+| \`collab_memory_stats\` | Get memory statistics |
+| \`collab_memory_active\` | Get all active memories |
+
+## Plan & File Protection
+
+Protect important files (plans, session-created files) from accidental deletion or overwriting.
+
+### Register Plans
+
+After creating a plan document, register it for protection:
+
+\`\`\`
+collab_plan_register({
+  session_id: "...",
+  file_path: "docs/implementation-plan.md",
+  title: "Auth System Refactor Plan",
+  content_summary: "1. Migrate to JWT\\n2. Add refresh tokens\\n3. Update middleware",
+  status: "approved"
+})
+\`\`\`
+
+Plans are automatically:
+- **Pinned** (always appear in active memory)
+- **High priority** (95/100)
+- **Protected** from deletion warnings
+
+### Plan Status Lifecycle
+
+\`\`\`
+draft → approved → in_progress → completed → archived
+                                     ↓
+                              (Protection reduced)
+                              (Priority: 50 → 30)
+                              (Unpinned)
+\`\`\`
+
+Update plan status as work progresses:
+
+\`\`\`
+collab_plan_update_status({
+  session_id: "...",
+  file_path: "docs/implementation-plan.md",
+  status: "completed",
+  summary: "All tasks completed. JWT auth implemented."
+})
+\`\`\`
+
+### Register Created Files
+
+Track important files created during the session:
+
+\`\`\`
+collab_file_register({
+  session_id: "...",
+  file_path: "src/auth/jwt-validator.ts",
+  file_type: "code",
+  description: "New JWT validation utility"
+})
+\`\`\`
+
+### Check Before Deleting
+
+Before deleting any file, check if it's protected:
+
+\`\`\`
+collab_file_check_protected({
+  session_id: "...",
+  file_path: "docs/implementation-plan.md"
+})
+
+// Response:
+{
+  protected: true,
+  reason: "plan",
+  warning: "⚠️ This file is protected (plan). Confirm before deleting."
+}
+\`\`\`
+
+### Protection Tools
+
+| Tool | Purpose |
+|------|---------|
+| \`collab_plan_register\` | Register a plan for protection |
+| \`collab_plan_update_status\` | Update plan status |
+| \`collab_plan_get\` | Get plan info |
+| \`collab_plan_list\` | List all plans |
+| \`collab_file_register\` | Register created file |
+| \`collab_file_list_created\` | List created files |
+| \`collab_file_check_protected\` | Check if file is protected |
+| \`collab_file_list_protected\` | List all protected files |
+
+### Why This Matters
+
+When Claude's context is compacted:
+- Important plan details may be lost
+- Session-created files might be forgotten
+- Claude might accidentally delete recently created files
+
+With protection:
+- Plans are pinned in working memory
+- Created files are tracked
+- Deletion triggers warnings
+- Context survives summarization
+
 ## Best Practices
 
 - **Prefer symbol-level claims** for focused changes (single function/class)
@@ -294,6 +479,8 @@ Filter by session, action type, or date range. Entries auto-deleted after 7 days
 - **Check references** before modifying widely-used symbols
 - **Set appropriate priority** for urgent work (95+ for production fixes)
 - **Check notifications** when waiting for blocked claims
+- **Save important findings** to working memory as you discover them
+- **Pin critical context** that must survive compaction
 - Claim early, release when done
 - Use descriptive intents (e.g., "Refactoring validateToken for JWT support")
 `.trim();

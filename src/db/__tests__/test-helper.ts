@@ -212,9 +212,36 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_sessions_status_heartbeat ON sessions(status, last_heartbeat)`,
   `CREATE INDEX IF NOT EXISTS idx_claims_status_session ON claims(status, session_id)`,
   `CREATE INDEX IF NOT EXISTS idx_claim_files_path_claim ON claim_files(file_path, claim_id)`,
+
+  // Working memory table for context persistence
+  `CREATE TABLE IF NOT EXISTS working_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    category TEXT NOT NULL CHECK (category IN ('finding', 'decision', 'state', 'todo', 'important', 'context')),
+    key TEXT NOT NULL,
+    content TEXT NOT NULL,
+    priority INTEGER DEFAULT 50 CHECK (priority >= 0 AND priority <= 100),
+    pinned INTEGER DEFAULT 0 CHECK (pinned IN (0, 1)),
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT,
+    related_claim_id TEXT,
+    related_decision_id TEXT,
+    metadata TEXT,
+    UNIQUE(session_id, category, key),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (related_claim_id) REFERENCES claims(id) ON DELETE SET NULL,
+    FOREIGN KEY (related_decision_id) REFERENCES decisions(id) ON DELETE SET NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_working_memory_session ON working_memory(session_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_working_memory_category ON working_memory(session_id, category)`,
+  `CREATE INDEX IF NOT EXISTS idx_working_memory_key ON working_memory(session_id, key)`,
+  `CREATE INDEX IF NOT EXISTS idx_working_memory_priority ON working_memory(session_id, pinned DESC, priority DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_working_memory_expires ON working_memory(expires_at)`,
 ];
 
 const CLEANUP_STATEMENTS = [
+  'DELETE FROM working_memory',
   'DELETE FROM notifications',
   'DELETE FROM claim_queue',
   'DELETE FROM audit_history',

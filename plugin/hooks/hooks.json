@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"continue\": true, \"systemMessage\": \"Session Collaboration Plugin Active. REQUIRED: Call mcp__session-collab__collab_session_start with project_root and session name before doing anything else.\"}'"
+            "command": "echo '{\"continue\": true, \"systemMessage\": \"Session Collaboration Plugin Active. REQUIRED: Call mcp__session-collab__collab_session_start with project_root and session name IMMEDIATELY. This will auto-load context from previous sessions.\"}'"
           }
         ]
       }
@@ -16,7 +16,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"decision\": \"allow\", \"systemMessage\": \"REMINDER: Before editing files, ensure you have called collab_check. Follow the workflow: collab_check -> collab_claim -> Edit -> collab_release\"}'"
+            "command": "echo '{\"decision\": \"allow\", \"systemMessage\": \"REQUIRED WORKFLOW: collab_check -> collab_claim -> Edit -> collab_release. Plan files (*.md with plan/design/spec in name) are auto-protected when claimed.\"}'"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"decision\": \"allow\", \"systemMessage\": \"WARNING: Before deleting files (rm, unlink, git clean), call collab_file_check_protected to verify no protected files (plans, session-created files) will be affected.\"}'"
           }
         ]
       }
@@ -27,7 +36,26 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Edit completed. If you have an active claim on this file and are done editing, call collab_auto_release with your session_id and the file_path to release the claim automatically.\"}'"
+            "command": "echo '{\"systemMessage\": \"Edit completed. Call collab_auto_release to release claim. For important findings/decisions, use collab_memory_save to persist context.\"}'"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|mcp__filesystem__write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"File created. Plan files are auto-protected via claims. For other important files, call collab_file_register. For plans, collab_plan_register provides lifecycle management.\"}'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Session ending. Important context should be saved with collab_memory_save (pinned=true for critical items). Call collab_session_end to release claims and generate session summary.\"}'"
           }
         ]
       }
