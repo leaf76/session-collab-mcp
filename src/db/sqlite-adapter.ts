@@ -130,10 +130,37 @@ class SqliteDatabase implements DatabaseAdapter {
   }
 
   // Initialize database schema
+  // Handles upgrades gracefully by ignoring "already exists" and "duplicate column" errors
   initSchema(migrations: string[]): void {
     for (const migration of migrations) {
-      this.db.exec(migration);
+      // Split migration into individual statements for granular error handling
+      const statements = migration
+        .split(';')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0 && !s.startsWith('--'));
+
+      for (const stmt of statements) {
+        try {
+          this.runSql(stmt);
+        } catch (error) {
+          // Ignore errors for idempotent operations (upgrades)
+          const message = error instanceof Error ? error.message : String(error);
+          const isIgnorable =
+            message.includes('already exists') ||
+            message.includes('duplicate column name') ||
+            message.includes('UNIQUE constraint failed');
+
+          if (!isIgnorable) {
+            throw error;
+          }
+        }
+      }
     }
+  }
+
+  // Run a single SQL statement (used by initSchema for granular error handling)
+  private runSql(sql: string): void {
+    this.db.prepare(sql).run();
   }
 
   close(): void {
