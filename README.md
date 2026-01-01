@@ -31,18 +31,10 @@ Session Collab MCP provides a **Work-in-Progress (WIP) Registry** that allows se
 Install as a Claude Code plugin for automatic MCP server setup, hooks, and skills:
 
 ```bash
-# Add the marketplace
-/plugin marketplace add YOUR_USERNAME/session-collab-plugin
-
-# Install the plugin
-/plugin install session-collab@session-collab-plugins
-```
-
-Or test locally:
-
-```bash
 claude --plugin-dir ./plugin
 ```
+
+> **Note**: Marketplace publishing coming soon. For now, clone the repo and use the local plugin directory.
 
 The plugin includes:
 - **MCP Server**: Automatically configured
@@ -256,7 +248,8 @@ session-collab-mcp/
 │   ├── 0007_priority.sql       # Claim priority
 │   ├── 0008_history.sql        # Audit history
 │   ├── 0009_queue.sql          # Claim queue
-│   └── 0010_notifications.sql  # Notifications
+│   ├── 0010_notifications.sql  # Notifications
+│   └── 0011_working_memory.sql # Working memory & plan protection
 ├── plugin/                 # Claude Code Plugin
 │   ├── .claude-plugin/
 │   │   ├── plugin.json         # Plugin manifest
@@ -294,6 +287,15 @@ session-collab-mcp/
 ```
 
 ## Changelog
+
+### v0.8.0
+
+- Add working memory system for context persistence (`collab_memory_*` tools)
+- Add plan protection (`collab_plan_register`, `collab_plan_update_status`)
+- Add file protection (`collab_file_register`, `collab_file_check_protected`)
+- Memory categories: finding, decision, state, todo, important, context
+- Pinned memories survive context compaction
+- Plan lifecycle: draft → approved → in_progress → completed → archived
 
 ### v0.7.1
 

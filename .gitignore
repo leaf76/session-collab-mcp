@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Claude Code settings
+.claude/
+
 # Build output
 dist/
 .wrangler/
