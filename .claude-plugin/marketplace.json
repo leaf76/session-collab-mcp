@@ -1,0 +1,30 @@
+{
+  "name": "session-collab-plugins",
+  "owner": {
+    "name": "leaf76",
+    "email": "leaf76@example.com"
+  },
+  "metadata": {
+    "description": "Session collaboration tools for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "session-collab",
+      "source": "./plugin",
+      "description": "Multi-session collaboration for Claude Code - prevents conflicts when multiple sessions work on the same codebase",
+      "version": "0.8.1",
+      "author": {
+        "name": "leaf76"
+      },
+      "keywords": [
+        "collaboration",
+        "session",
+        "conflict-detection",
+        "multi-session",
+        "mcp"
+      ],
+      "category": "productivity"
+    }
+  ]
+}
