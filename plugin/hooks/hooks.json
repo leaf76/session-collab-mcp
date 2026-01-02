@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Session Collaboration Plugin Active. Call collab_session_start to register this session.\"}'"
+            "command": "echo '{\"systemMessage\": \"Session Collaboration Plugin Active. Call collab_session_start to register this session, then collab_memory_active to restore saved context.\"}'"
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Session ending. Call collab_session_end to release claims and clean up.\"}'"
+            "command": "echo '{\"systemMessage\": \"Session ending. Save important findings with collab_memory_save (pinned=true), then call collab_session_end to clean up.\"}'"
           }
         ]
       }
