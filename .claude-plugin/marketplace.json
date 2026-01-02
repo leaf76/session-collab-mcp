@@ -1,8 +1,7 @@
 {
   "name": "session-collab-plugins",
   "owner": {
-    "name": "leaf76",
-    "email": "leaf76@example.com"
+    "name": "leaf76"
   },
   "metadata": {
     "description": "Session collaboration tools for Claude Code",

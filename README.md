@@ -31,10 +31,12 @@ Session Collab MCP provides a **Work-in-Progress (WIP) Registry** that allows se
 Install as a Claude Code plugin for automatic MCP server setup, hooks, and skills:
 
 ```bash
-claude --plugin-dir ./plugin
-```
+# Add marketplace
+/plugin marketplace add leaf76/session-collab-mcp
 
-> **Note**: Marketplace publishing coming soon. For now, clone the repo and use the local plugin directory.
+# Install plugin
+/plugin install session-collab@session-collab-plugins
+```
 
 The plugin includes:
 - **MCP Server**: Automatically configured

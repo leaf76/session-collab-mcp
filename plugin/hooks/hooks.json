@@ -59,6 +59,48 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Subagent completed. If it edited files, ensure claims are released via collab_release or collab_auto_release. Check collab_claims_list for any unreleased claims from this task.\"}'"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto|manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"CRITICAL: Context compaction imminent. BEFORE compact: 1) Call collab_memory_active to review important context 2) Pin critical findings with collab_memory_save (pinned=true, priority>=80) 3) Register any plans with collab_plan_register. Pinned memories and plans will survive compaction.\"}'"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"additionalContext\": \"Session cleanup: Unreleased claims will be auto-released. Important context should have been saved via collab_memory_save.\"}'"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Session idle detected. Consider: 1) Call collab_session_heartbeat to maintain session activity 2) Save any pending findings with collab_memory_save 3) Release unused claims with collab_release.\"}'"
+          }
+        ]
+      }
     ]
   }
 }

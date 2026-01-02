@@ -12,17 +12,12 @@ Claude Code plugin for multi-session collaboration - prevents conflicts when mul
 
 ## Installation
 
-### From Marketplace (after publishing)
-
 ```bash
-/plugin marketplace add your-username/session-collab-plugins
+# Add marketplace
+/plugin marketplace add leaf76/session-collab-mcp
+
+# Install plugin
 /plugin install session-collab@session-collab-plugins
-```
-
-### Local Development
-
-```bash
-claude --plugin-dir ./plugin
 ```
 
 ## Components

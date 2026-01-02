@@ -7,11 +7,10 @@ MCP server for Claude Code session collaboration - prevents conflicts when multi
 ### Option 1: Claude Code Plugin (Recommended)
 
 ```bash
-# Local testing
-claude --plugin-dir ./plugin
+# Add marketplace
+/plugin marketplace add leaf76/session-collab-mcp
 
-# After publishing
-/plugin marketplace add YOUR_USERNAME/session-collab-plugin
+# Install plugin
 /plugin install session-collab@session-collab-plugins
 ```
 

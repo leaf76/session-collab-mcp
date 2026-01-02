@@ -1,13 +1,12 @@
 {
   "name": "session-collab",
-  "version": "0.8.0",
+  "version": "0.8.4",
   "description": "Multi-session collaboration for Claude Code - prevents conflicts, persists context, and protects important files",
   "author": {
-    "name": "cy76",
-    "email": "cy76@example.com"
+    "name": "leaf76"
   },
-  "homepage": "https://github.com/anthropics/session-collab-mcp",
-  "repository": "https://github.com/anthropics/session-collab-mcp",
+  "homepage": "https://github.com/leaf76/session-collab-mcp",
+  "repository": "https://github.com/leaf76/session-collab-mcp",
   "license": "MIT",
   "keywords": [
     "collaboration",
