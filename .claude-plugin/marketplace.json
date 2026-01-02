@@ -13,7 +13,7 @@
       "name": "session-collab",
       "source": "./plugin",
       "description": "Multi-session collaboration for Claude Code - prevents conflicts when multiple sessions work on the same codebase",
-      "version": "0.8.1",
+      "version": "0.8.4",
       "author": {
         "name": "leaf76"
       },
