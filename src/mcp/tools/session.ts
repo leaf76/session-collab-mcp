@@ -313,6 +313,16 @@ export async function handleSessionTool(
         return sessionResult.error;
       }
 
+      // Get all active claims for this session BEFORE ending
+      const activeClaims = await listClaims(db, { session_id: input.session_id, status: 'active' });
+      const claimsToRelease = activeClaims.map(claim => ({
+        id: claim.id,
+        files: claim.files,
+        intent: claim.intent,
+        scope: claim.scope,
+        created_at: claim.created_at,
+      }));
+
       // Generate memory summary before ending session
       const memories = await recallMemory(db, input.session_id, {});
       let memorySummary: {
@@ -376,7 +386,12 @@ export async function handleSessionTool(
 
       return successResponse({
         success: true,
-        message: `Session ended. All claims marked as ${input.release_claims === 'complete' ? 'completed' : 'abandoned'}.${removedFromQueues > 0 ? ` Removed from ${removedFromQueues} queue(s).` : ''}`,
+        message: `Session ended. ${claimsToRelease.length} claim(s) marked as ${input.release_claims === 'complete' ? 'completed' : 'abandoned'}.${removedFromQueues > 0 ? ` Removed from ${removedFromQueues} queue(s).` : ''}`,
+        claims_released: claimsToRelease.length > 0 ? {
+          count: claimsToRelease.length,
+          status: input.release_claims === 'complete' ? 'completed' : 'abandoned',
+          details: claimsToRelease,
+        } : null,
         memory_summary: memorySummary,
       });
     }

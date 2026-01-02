@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Session ending. Important context should be saved with collab_memory_save (pinned=true for critical items). Call collab_session_end to release claims and generate session summary.\"}'"
+            "command": "echo '{\"systemMessage\": \"Session ending. BEFORE calling collab_session_end: 1) Call collab_claims_list to review unreleased claims 2) Save important context with collab_memory_save (pinned=true) 3) Then call collab_session_end with appropriate release_claims status (complete/abandon)\"}'"
           }
         ]
       }
