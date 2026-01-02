@@ -5,27 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"continue\": true, \"systemMessage\": \"Session Collaboration Plugin Active. REQUIRED: Call mcp__session-collab__collab_session_start with project_root and session name IMMEDIATELY. This will auto-load context from previous sessions.\"}'"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|mcp__filesystem__write_file|mcp__filesystem__edit_file",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"systemMessage\": \"Edit completed. Call collab_auto_release to release claim. For important findings/decisions, use collab_memory_save to persist context.\"}'"
-          }
-        ]
-      },
-      {
-        "matcher": "Write|mcp__filesystem__write_file",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"systemMessage\": \"File created. Plan files are auto-protected via claims. For other important files, call collab_file_register. For plans, collab_plan_register provides lifecycle management.\"}'"
+            "command": "echo '{\"continue\": true, \"systemMessage\": \"Session Collaboration Plugin Active. Call collab_session_start to register this session.\"}'"
           }
         ]
       }
@@ -35,17 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Session ending. BEFORE calling collab_session_end: 1) Call collab_claims_list to review unreleased claims 2) Save important context with collab_memory_save (pinned=true) 3) Then call collab_session_end with appropriate release_claims status (complete/abandon)\"}'"
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"systemMessage\": \"Subagent completed. If it edited files, ensure claims are released via collab_release or collab_auto_release. Check collab_claims_list for any unreleased claims from this task.\"}'"
+            "command": "echo '{\"systemMessage\": \"Session ending. Call collab_session_end to release claims and clean up.\"}'"
           }
         ]
       }
@@ -56,28 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"CRITICAL: Context compaction imminent. BEFORE compact: 1) Call collab_memory_active to review important context 2) Pin critical findings with collab_memory_save (pinned=true, priority>=80) 3) Register any plans with collab_plan_register. Pinned memories and plans will survive compaction.\"}'"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"additionalContext\": \"Session cleanup: Unreleased claims will be auto-released. Important context should have been saved via collab_memory_save.\"}'"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "idle_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"systemMessage\": \"Session idle detected. Consider: 1) Call collab_session_heartbeat to maintain session activity 2) Save any pending findings with collab_memory_save 3) Release unused claims with collab_release.\"}'"
+            "command": "echo '{\"systemMessage\": \"Context compaction imminent. Save critical findings with collab_memory_save (pinned=true).\"}'"
           }
         ]
       }
