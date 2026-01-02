@@ -10,26 +10,6 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"decision\": \"allow\", \"systemMessage\": \"REQUIRED WORKFLOW: collab_check -> collab_claim -> Edit -> collab_release. Plan files (*.md with plan/design/spec in name) are auto-protected when claimed.\"}'"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"decision\": \"allow\", \"systemMessage\": \"WARNING: Before deleting files (rm, unlink, git clean), call collab_file_check_protected to verify no protected files (plans, session-created files) will be affected.\"}'"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|mcp__filesystem__write_file|mcp__filesystem__edit_file",

@@ -1,6 +1,6 @@
 {
   "name": "session-collab",
-  "version": "0.8.4",
+  "version": "0.8.6",
   "description": "Multi-session collaboration for Claude Code - prevents conflicts, persists context, and protects important files",
   "author": {
     "name": "leaf76"
