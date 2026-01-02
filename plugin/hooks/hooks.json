@@ -5,7 +5,29 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"continue\": true, \"systemMessage\": \"Session Collaboration Plugin Active. Call collab_session_start to register this session.\"}'"
+            "command": "echo '{\"systemMessage\": \"Session Collaboration Plugin Active. Call collab_session_start to register this session.\"}'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Reminder: collab_check -> collab_claim -> Edit -> collab_release\"}'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|mcp__filesystem__write_file|mcp__filesystem__edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"File edited. Consider collab_auto_release if done with this file.\"}'"
           }
         ]
       }
@@ -16,6 +38,16 @@
           {
             "type": "command",
             "command": "echo '{\"systemMessage\": \"Session ending. Call collab_session_end to release claims and clean up.\"}'"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Subagent completed. Check collab_claims_list for any unreleased claims.\"}'"
           }
         ]
       }
