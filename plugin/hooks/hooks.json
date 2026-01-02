@@ -10,17 +10,6 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"decision\":\"allow\",\"systemMessage\":\"REMINDER: collab_check -> collab_claim -> Edit -> collab_release\"}'"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|mcp__filesystem__write_file|mcp__filesystem__edit_file",
