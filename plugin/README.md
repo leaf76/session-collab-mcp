@@ -1,14 +1,12 @@
 # Session Collab Plugin
 
-Claude Code plugin for multi-session collaboration - prevents conflicts when multiple sessions work on the same codebase.
+Claude Code plugin for AI context persistence and multi-session collaboration.
 
 ## Features
 
-- **Automatic MCP Server**: Installs `session-collab-mcp` automatically
-- **SessionStart Hook**: Reminds to initialize session at conversation start
-- **PreToolUse Hook**: Reminds to check conflicts before editing files
-- **Skills**: `collab-start` skill for comprehensive session initialization
-- **Commands**: `/session-collab:status` and `/session-collab:end`
+- **Lite Mode**: Context persistence for single sessions (13 tools)
+- **Full Mode**: Collaboration tools for multi-session work (50+ tools)
+- **Auto-Detection**: Mode switches automatically based on active sessions
 
 ## Installation
 
@@ -20,56 +18,45 @@ Claude Code plugin for multi-session collaboration - prevents conflicts when mul
 /plugin install session-collab@session-collab-plugins
 ```
 
-## Components
+## Quick Start
 
-### MCP Server
+```
+1. collab_session_start    # Register session
+2. collab_memory_active    # Restore saved context
+3. ... work ...
+4. collab_memory_save      # Save important findings
+5. collab_session_end      # Clean up
+```
 
-Automatically starts `session-collab-mcp` which provides:
+## Core Tools (Lite Mode)
 
 | Tool | Purpose |
 |------|---------|
-| `collab_session_start` | Register a new session |
-| `collab_session_end` | End session and release claims |
-| `collab_check` | Check for conflicts before editing |
-| `collab_claim` | Reserve files/symbols |
-| `collab_release` | Release claims when done |
-| `collab_message_send` | Send messages to other sessions |
+| `collab_session_start` | Register session |
+| `collab_session_end` | End session |
+| `collab_memory_save` | Save important context |
+| `collab_memory_recall` | Retrieve saved context |
+| `collab_memory_active` | Get pinned + high-priority memories |
+| `collab_plan_register` | Protect plan documents |
 
-### Hooks
+## Multi-Session Tools (Full Mode)
 
-| Event | Action |
-|-------|--------|
-| `SessionStart` | Remind to call `collab_session_start` |
-| `PreToolUse (Edit\|Write)` | Remind to check conflicts |
+When multiple sessions are detected:
+- `collab_claim` / `collab_check` / `collab_release`
+- `collab_queue_*` / `collab_notifications_*`
+- `collab_message_*`
 
-### Commands
+## Commands
 
 | Command | Description |
 |---------|-------------|
 | `/session-collab:status` | Show current session status |
 | `/session-collab:end` | End session and release claims |
 
-### Skills
-
-| Skill | Description |
-|-------|-------------|
-| `collab-start` | Full session initialization workflow |
-
-## Workflow
-
-1. **Start**: Session automatically prompted at conversation start
-2. **Check**: Before editing, check for conflicts with `collab_check`
-3. **Claim**: Reserve files with `collab_claim`
-4. **Edit**: Make your changes
-5. **Release**: Free files with `collab_release`
-6. **End**: Terminate session with `collab_session_end`
-
 ## Data Storage
 
 SQLite database at `~/.claude/session-collab/collab.db`
-
-- Uses WAL mode for multi-process safety
-- No remote server required
+- WAL mode for multi-process safety
 - Works offline
 
 ## License

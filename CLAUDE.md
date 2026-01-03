@@ -1,6 +1,20 @@
 # Session Collab MCP
 
-MCP server for Claude Code session collaboration - prevents conflicts when multiple sessions work on the same codebase.
+AI Context Persistence & Multi-Session Collaboration for Claude Code.
+
+## What It Does
+
+**Single Session (Lite Mode)**: Persist important context across conversations
+- Save findings, decisions, and state with `collab_memory_save`
+- Restore context with `collab_memory_active`
+- Protect plan documents from accidental deletion
+
+**Multiple Sessions (Full Mode)**: Coordinate parallel work
+- Claim files/symbols before editing
+- Detect and prevent conflicts
+- Queue system for blocked resources
+
+The server **automatically detects** which mode to use based on active session count.
 
 ## Installation
 
@@ -29,135 +43,65 @@ Add to `~/.claude.json`:
 }
 ```
 
-## What Happens Automatically
+## Quick Start
 
-Once installed, Claude will:
+```
+1. collab_session_start    # Register session
+2. collab_memory_active    # Restore saved context
+3. ... work ...
+4. collab_memory_save      # Save important findings (pinned=true)
+5. collab_session_end      # Clean up
+```
 
-1. Register a session when conversation starts
-2. Check for conflicts before editing files
-3. Claim files/symbols before making changes
-4. Warn you if another session is working on the same files or symbols
-5. Clean up when the conversation ends
+## Lite Mode Tools (Single Session)
 
-## Key Features
+| Tool | Purpose |
+|------|---------|
+| `collab_session_start` | Register session |
+| `collab_session_end` | End session |
+| `collab_memory_save` | Save important context |
+| `collab_memory_recall` | Retrieve saved context |
+| `collab_memory_active` | Get pinned + high-priority memories |
+| `collab_plan_register` | Protect plan documents |
+| `collab_decision_add` | Log architectural decisions |
 
-- **Symbol-Level Claims**: Fine-grained conflict detection at function/class level
-- **LSP Integration**: Validate symbols and analyze impact with LSP data
-- **Reference Tracking**: Understand impact of changes across the codebase
-- **Conflict Modes**: strict / smart (default) / bypass
-- **Auto-Release**: Automatic claim release after editing or on timeout
-- **Priority System**: Claim priority levels (critical/high/normal/low)
-- **Queue System**: Wait for blocked claims with priority ordering
+## Full Mode Tools (Multi-Session)
+
+When multiple sessions are detected, additional tools become available:
+
+| Category | Tools |
+|----------|-------|
+| Claim | `collab_claim`, `collab_check`, `collab_release`, `collab_auto_release` |
+| Queue | `collab_queue_join`, `collab_queue_leave`, `collab_queue_list` |
+| Notify | `collab_notifications_list`, `collab_notifications_mark_read` |
+| LSP | `collab_analyze_symbols`, `collab_validate_symbols`, `collab_impact_analysis` |
+| Message | `collab_message_send`, `collab_message_list` |
+
+## Memory Categories
+
+| Category | Use For |
+|----------|---------|
+| `finding` | Discovered facts, root causes |
+| `decision` | Architectural choices |
+| `state` | Current tracking info |
+| `important` | Critical context |
 
 ## Development
 
 ```bash
 npm install          # Install dependencies
 npm run build        # Build with tsup
-npm run start:dev    # Start in dev mode (tsx)
 npm run typecheck    # Type check
 npm run test         # Run tests
 ```
 
-## Project Structure
-
-```
-.
-├── src/                    # MCP Server source
-│   ├── cli.ts              # Entry point
-│   ├── constants.ts        # Version info, server instructions
-│   ├── db/                 # SQLite database layer
-│   │   ├── queries.ts      # SQL queries
-│   │   ├── sqlite-adapter.ts
-│   │   └── types.ts        # Database type definitions
-│   ├── mcp/
-│   │   ├── protocol.ts     # JSON-RPC protocol
-│   │   ├── server.ts       # MCP server
-│   │   └── tools/          # Tool implementations
-│   │       ├── session.ts  # Session management
-│   │       ├── claim.ts    # File/symbol claims
-│   │       ├── message.ts  # Messaging
-│   │       ├── decision.ts # Decision logging
-│   │       └── lsp.ts      # LSP integration
-│   └── utils/
-│       ├── crypto.ts       # Hash utilities
-│       └── response.ts     # Shared response builders
-├── plugin/                 # Claude Code Plugin
-│   ├── .claude-plugin/
-│   │   ├── plugin.json     # Plugin manifest
-│   │   └── marketplace.json# Marketplace config
-│   ├── .mcp.json           # MCP server config
-│   ├── hooks/
-│   │   └── hooks.json      # SessionStart & PreToolUse hooks
-│   ├── skills/
-│   │   └── collab-start/   # Session initialization skill
-│   │       └── SKILL.md
-│   ├── commands/
-│   │   ├── status.md       # /session-collab:status
-│   │   └── end.md          # /session-collab:end
-│   └── README.md
-└── migrations/             # SQLite migrations
-```
-
-## MCP Tools Reference
-
-### Session Management
-
-| Tool | Purpose |
-|------|---------|
-| `collab_session_start` | Register a new session |
-| `collab_session_end` | End session and release all claims |
-| `collab_session_list` | List active sessions |
-| `collab_session_heartbeat` | Update session heartbeat |
-| `collab_status_update` | Update current task and todos |
-| `collab_config` | Configure conflict handling mode |
-
-### Claim Management
-
-| Tool | Purpose |
-|------|---------|
-| `collab_claim` | Reserve files or symbols before modifying |
-| `collab_check` | Check if files/symbols are claimed by others |
-| `collab_release` | Release claimed files/symbols |
-| `collab_auto_release` | Auto-release claims after editing a file |
-| `collab_claims_list` | List all active claims |
-| `collab_claim_update_priority` | Update claim priority |
-
-### Queue & Notifications
-
-| Tool | Purpose |
-|------|---------|
-| `collab_queue_join` | Join waiting queue for a blocked claim |
-| `collab_queue_leave` | Leave the waiting queue |
-| `collab_queue_list` | List queue entries |
-| `collab_notifications_list` | List notifications for your session |
-| `collab_notifications_mark_read` | Mark notifications as read |
-| `collab_history_list` | View audit history
-
-### LSP Integration
-
-| Tool | Purpose |
-|------|---------|
-| `collab_analyze_symbols` | Analyze LSP symbols for conflict detection |
-| `collab_validate_symbols` | Validate symbol names before claiming |
-| `collab_store_references` | Store symbol reference data |
-| `collab_impact_analysis` | Analyze impact of modifying a symbol |
-
-### Communication
-
-| Tool | Purpose |
-|------|---------|
-| `collab_message_send` | Send message to other sessions |
-| `collab_message_list` | Read messages |
-| `collab_decision_add` | Record architectural decisions |
-| `collab_decision_list` | View recorded decisions |
-
 ## Data Storage
 
 SQLite database at `~/.claude/session-collab/collab.db`
-
-- Uses WAL mode for multi-process safety
-- Migrations in `migrations/` directory
-- Composite indexes for optimized queries
+- WAL mode for multi-process safety
 - No remote server required
 - Works offline
+
+## License
+
+MIT

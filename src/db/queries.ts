@@ -952,9 +952,8 @@ export async function storeReferences(
     const results = await db.batch(statements);
     const stored = results.reduce((acc, r) => acc + r.meta.changes, 0);
     return { stored, skipped: statements.length - stored };
-  } catch (err) {
-    // Log error for debugging, return partial result
-    console.error('[storeReferences] Batch insert failed:', err);
+  } catch {
+    // Batch insert failed - return partial result without leaking error details
     return { stored: 0, skipped: statements.length };
   }
 }
@@ -1881,11 +1880,11 @@ export async function updatePlanStatus(
   let metadata: Record<string, unknown> = {};
   try {
     metadata = current.metadata ? JSON.parse(current.metadata) : {};
-  } catch {
-    // ignore
-  }
+    } catch {
+      // Fallback to empty object if metadata is corrupted - safe default
+    }
 
-  metadata.status = newStatus;
+    metadata.status = newStatus;
   if (newStatus === 'completed') {
     metadata.completed_at = new Date().toISOString();
   }
@@ -1931,7 +1930,7 @@ export async function getPlan(
   try {
     metadata = memory.metadata ? JSON.parse(memory.metadata) : {};
   } catch {
-    // ignore
+    // Fallback to empty object if metadata is corrupted - safe default
   }
 
   return {
@@ -1984,7 +1983,7 @@ export async function listPlans(
     try {
       metadata = memory.metadata ? JSON.parse(memory.metadata) : {};
     } catch {
-      // ignore
+      // Fallback to empty object if metadata is corrupted - safe default
     }
 
     return {
@@ -2055,7 +2054,7 @@ export async function getCreatedFiles(
     try {
       metadata = memory.metadata ? JSON.parse(memory.metadata) : {};
     } catch {
-      // ignore
+      // Fallback to empty object if metadata is corrupted - safe default
     }
 
     return {
@@ -2136,7 +2135,7 @@ export async function getProtectedFiles(
     try {
       metadata = memory.metadata ? JSON.parse(memory.metadata) : {};
     } catch {
-      // ignore
+      // Fallback to empty object if metadata is corrupted - safe default
     }
 
     const isPlan = memory.key.startsWith('plan:');

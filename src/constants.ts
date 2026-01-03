@@ -484,3 +484,30 @@ With protection:
 - Claim early, release when done
 - Use descriptive intents (e.g., "Refactoring validateToken for JWT support")
 `.trim();
+
+export const SERVER_INSTRUCTIONS_LITE = [
+  '# AI Context Persistence (Lite Mode)',
+  '',
+  'Persist important context across conversations.',
+  '',
+  '## Quick Start',
+  '1. On start: collab_session_start with project_root',
+  '2. Restore: collab_memory_active to load saved memories',
+  '3. Save: collab_memory_save for important discoveries',
+  '4. On end: collab_session_end to clean up',
+  '',
+  '## Core Tools',
+  '- collab_session_start/end: Session lifecycle',
+  '- collab_memory_save/recall/active: Context persistence',
+  '- collab_plan_register/list: Plan protection',
+  '- collab_decision_add: Log decisions',
+  '',
+  '## Memory Categories',
+  '- finding: Discovered facts',
+  '- decision: Architectural choices',
+  '- state: Tracking info',
+  '- important: Critical context',
+  '',
+  '## Multi-Session Mode',
+  'When multiple sessions detected, collaboration tools activate (claim, check, release).',
+].join('\n');

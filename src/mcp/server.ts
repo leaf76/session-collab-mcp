@@ -1,5 +1,4 @@
 // MCP Server implementation for Session Collaboration
-// Last edited: 2025-12-29 by session-b
 
 import type { DatabaseAdapter } from '../db/sqlite-adapter.js';
 import {
@@ -26,7 +25,7 @@ import { notificationTools, handleNotificationTool } from './tools/notification'
 import { memoryTools, handleMemoryTool } from './tools/memory';
 import { protectionTools, handleProtectionTool } from './tools/protection';
 import type { AuthContext } from '../auth/types';
-import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from '../constants.js';
+import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS_LITE } from '../constants.js';
 
 const SERVER_INFO: McpServerInfo = {
   name: SERVER_NAME,
@@ -37,8 +36,38 @@ const CAPABILITIES: McpCapabilities = {
   tools: {},
 };
 
-// Combine all tools
+// Lite mode: Core tools for single-session (focus on memory/context)
+const LITE_TOOL_NAMES = new Set([
+  'collab_session_start',
+  'collab_session_end',
+  'collab_session_list',
+  'collab_status_update',
+  'collab_memory_save',
+  'collab_memory_recall',
+  'collab_memory_active',
+  'collab_memory_clear',
+  'collab_plan_register',
+  'collab_plan_list',
+  'collab_plan_get',
+  'collab_decision_add',
+  'collab_decision_list',
+]);
+
+// All tools combined
 const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools, ...lspTools, ...historyTools, ...queueTools, ...notificationTools, ...memoryTools, ...protectionTools];
+
+// Lite mode tools (filtered)
+const LITE_TOOLS: McpTool[] = ALL_TOOLS.filter(t => LITE_TOOL_NAMES.has(t.name));
+
+export type ServerMode = 'lite' | 'full';
+
+export async function detectServerMode(db: DatabaseAdapter): Promise<ServerMode> {
+  const result = await db
+    .prepare("SELECT COUNT(*) as count FROM sessions WHERE status = 'active'")
+    .first<{ count: number }>();
+  const activeCount = result?.count ?? 0;
+  return activeCount > 1 ? 'full' : 'lite';
+}
 
 export class McpServer {
   private authContext?: AuthContext;
@@ -53,14 +82,13 @@ export class McpServer {
     try {
       switch (method) {
         case 'initialize':
-          return this.handleInitialize(id);
+          return await this.handleInitialize(id);
 
         case 'notifications/initialized':
-          // Client acknowledging initialization - no response needed for notifications
           return createSuccessResponse(id, {});
 
         case 'tools/list':
-          return this.handleToolsList(id);
+          return await this.handleToolsList(id);
 
         case 'tools/call':
           return await this.handleToolCall(id, params as { name: string; arguments?: Record<string, unknown> });
@@ -77,17 +105,21 @@ export class McpServer {
     }
   }
 
-  private handleInitialize(id: string | number | undefined): JsonRpcResponse {
+  private async handleInitialize(id: string | number | undefined): Promise<JsonRpcResponse> {
+    const mode = await detectServerMode(this.db);
+    const instructions = mode === 'lite' ? SERVER_INSTRUCTIONS_LITE : SERVER_INSTRUCTIONS;
     return createSuccessResponse(id, {
       protocolVersion: '2024-11-05',
       serverInfo: SERVER_INFO,
       capabilities: CAPABILITIES,
-      instructions: SERVER_INSTRUCTIONS,
+      instructions,
     });
   }
 
-  private handleToolsList(id: string | number | undefined): JsonRpcResponse {
-    return createSuccessResponse(id, { tools: ALL_TOOLS });
+  private async handleToolsList(id: string | number | undefined): Promise<JsonRpcResponse> {
+    const mode = await detectServerMode(this.db);
+    const tools = mode === 'lite' ? LITE_TOOLS : ALL_TOOLS;
+    return createSuccessResponse(id, { tools });
   }
 
   private async handleToolCall(
@@ -152,9 +184,13 @@ export function parseRequest(body: string): JsonRpcRequest | null {
   }
 }
 
-// Export tools list for CLI
 export function getMcpTools(): McpTool[] {
   return ALL_TOOLS;
+}
+
+export async function getMcpToolsForMode(db: DatabaseAdapter): Promise<McpTool[]> {
+  const mode = await detectServerMode(db);
+  return mode === 'lite' ? LITE_TOOLS : ALL_TOOLS;
 }
 
 // Handle MCP tool call for CLI

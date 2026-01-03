@@ -4,7 +4,10 @@ import { z } from 'zod';
 // Common schemas
 export const sessionIdSchema = z.string().min(1, 'session_id is required');
 export const claimIdSchema = z.string().min(1, 'claim_id is required');
-export const filePathSchema = z.string().min(1);
+export const filePathSchema = z.string().min(1).refine(
+  (path) => !path.includes('..') && !path.includes('\0'),
+  { message: 'Path cannot contain path traversal sequences (..) or null bytes' }
+);
 export const filesArraySchema = z.array(filePathSchema).min(1, 'At least one file is required');
 
 // Symbol claim schema

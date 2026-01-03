@@ -5,29 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Session Collaboration Plugin Active. Call collab_session_start to register this session, then collab_memory_active to restore saved context.\"}'"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"systemMessage\": \"Reminder: collab_check -> collab_claim -> Edit -> collab_release\"}'"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|mcp__filesystem__write_file|mcp__filesystem__edit_file",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"systemMessage\": \"File edited. Consider collab_auto_release if done with this file.\"}'"
+            "command": "echo '{\"systemMessage\": \"Context MCP ready. Use collab_session_start then collab_memory_active to restore context.\"}'"
           }
         ]
       }
@@ -37,17 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Session ending. Save important findings with collab_memory_save (pinned=true), then call collab_session_end to clean up.\"}'"
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"systemMessage\": \"Subagent completed. Check collab_claims_list for any unreleased claims.\"}'"
+            "command": "echo '{\"systemMessage\": \"Save important findings: collab_memory_save (pinned=true). Then collab_session_end.\"}'"
           }
         ]
       }
@@ -58,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Context compaction imminent. Save critical findings with collab_memory_save (pinned=true).\"}'"
+            "command": "echo '{\"systemMessage\": \"Context compaction. Save critical info: collab_memory_save (pinned=true).\"}'"
           }
         ]
       }
