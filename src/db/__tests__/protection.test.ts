@@ -13,7 +13,7 @@ import {
   isFileProtected,
   getProtectedFiles,
   recallMemory,
-} from '../queries';
+} from '../queries.js';
 
 describe('Phase 3: Plan & File Protection', () => {
   let db: TestDatabase;

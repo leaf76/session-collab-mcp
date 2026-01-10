@@ -1,4 +1,4 @@
-// Session tools tests - specifically testing collab_session_end claims_released feature
+// Session tools tests - testing collab_session_end (simplified response format)
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDatabase, TestDatabase } from '../../db/__tests__/test-helper.js';
 import { handleSessionTool } from '../tools/session.js';
@@ -15,8 +15,144 @@ describe('Session Tools', () => {
     db.close();
   });
 
+  describe('collab_session_start', () => {
+    it('should start session successfully', async () => {
+      const result = await handleSessionTool(db, 'collab_session_start', {
+        project_root: '/test/project',
+        name: 'test-session',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.session_id).toBeDefined();
+      expect(response.message).toContain('started');
+    });
+
+    it('should validate required project_root', async () => {
+      const result = await handleSessionTool(db, 'collab_session_start', {
+        name: 'test-session',
+        // Missing project_root
+      });
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toBe('INVALID_INPUT');
+    });
+  });
+
+  describe('collab_session_list', () => {
+    beforeEach(async () => {
+      // Create test sessions
+      await createSession(db, {
+        project_root: '/test/project',
+        name: 'session1',
+      });
+
+      await createSession(db, {
+        project_root: '/test/project',
+        name: 'session2',
+      });
+    });
+
+    it('should list active sessions', async () => {
+      const result = await handleSessionTool(db, 'collab_session_list', {});
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.sessions).toHaveLength(2);
+      expect(response.total).toBe(2);
+    });
+
+    it('should include inactive sessions when requested', async () => {
+      const result = await handleSessionTool(db, 'collab_session_list', {
+        include_inactive: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.sessions.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('collab_config', () => {
+    let sessionId: string;
+
+    beforeEach(async () => {
+      const session = await createSession(db, {
+        project_root: '/test/project',
+        name: 'test-session',
+      });
+      sessionId = session.id;
+    });
+
+    it('should update session config', async () => {
+      const result = await handleSessionTool(db, 'collab_config', {
+        session_id: sessionId,
+        mode: 'smart',
+        allow_release_others: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+
+      expect(response.config.mode).toBe('smart');
+      expect(response.config.allow_release_others).toBe(true);
+    });
+
+    it('should return error for invalid session', async () => {
+      const result = await handleSessionTool(db, 'collab_config', {
+        session_id: 'invalid-session',
+        mode: 'smart',
+      });
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toBe('SESSION_NOT_FOUND');
+    });
+  });
+
+  describe('collab_status', () => {
+    let sessionId: string;
+
+    beforeEach(async () => {
+      const session = await createSession(db, {
+        project_root: '/test/project',
+        name: 'test-session',
+      });
+      sessionId = session.id;
+
+      // Add a claim
+      await createClaim(db, {
+        session_id: sessionId,
+        files: ['src/test.ts'],
+        intent: 'Test work',
+        scope: 'small',
+      });
+    });
+
+    it('should return session status', async () => {
+      const result = await handleSessionTool(db, 'collab_status', {
+        session_id: sessionId,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.session.id).toBe(sessionId);
+      expect(response.claims).toHaveLength(1);
+      expect(response.message).toContain('1 claim(s)');
+    });
+
+    it('should return error for missing session_id', async () => {
+      const result = await handleSessionTool(db, 'collab_status', {});
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toBe('INVALID_INPUT');
+    });
+  });
+
   describe('collab_session_end', () => {
-    it('should return claims_released with details when session has active claims', async () => {
+    it('should return claims_released count when session has active claims', async () => {
       // Arrange: Create session with claims
       const session = await createSession(db, {
         project_root: '/test/project',
@@ -47,27 +183,16 @@ describe('Session Tools', () => {
         release_claims: 'complete',
       });
 
-      // Assert: Check result structure
+      // Assert: Check result structure (simplified format)
       expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
 
       expect(response.success).toBe(true);
-      expect(response.message).toContain('2 claim(s) marked as completed');
-      expect(response.claims_released).toBeDefined();
-      expect(response.claims_released.count).toBe(2);
-      expect(response.claims_released.status).toBe('completed');
-      expect(response.claims_released.details).toHaveLength(2);
-
-      // Verify details structure
-      const detail = response.claims_released.details[0];
-      expect(detail).toHaveProperty('id');
-      expect(detail).toHaveProperty('files');
-      expect(detail).toHaveProperty('intent');
-      expect(detail).toHaveProperty('scope');
-      expect(detail).toHaveProperty('created_at');
+      expect(response.message).toContain('2 claim(s) released');
+      expect(response.claims_released).toBe(2);
     });
 
-    it('should return claims_released as null when session has no active claims', async () => {
+    it('should return claims_released as 0 when session has no active claims', async () => {
       // Arrange: Create session without claims
       const session = await createSession(db, {
         project_root: '/test/project',
@@ -86,10 +211,10 @@ describe('Session Tools', () => {
 
       expect(response.success).toBe(true);
       expect(response.message).toContain('0 claim(s)');
-      expect(response.claims_released).toBeNull();
+      expect(response.claims_released).toBe(0);
     });
 
-    it('should mark claims as abandoned when release_claims is abandon', async () => {
+    it('should release claims when release_claims is abandon', async () => {
       // Arrange
       const session = await createSession(db, {
         project_root: '/test/project',
@@ -111,23 +236,15 @@ describe('Session Tools', () => {
 
       // Assert
       const response = JSON.parse(result.content[0].text);
-      expect(response.claims_released.status).toBe('abandoned');
-      expect(response.message).toContain('abandoned');
+      expect(response.claims_released).toBe(1);
+      expect(response.success).toBe(true);
     });
 
-    it('should include correct file paths in claims_released details', async () => {
+    it('should track memories_saved count', async () => {
       // Arrange
       const session = await createSession(db, {
         project_root: '/test/project',
         name: 'test-session',
-      });
-
-      const expectedFiles = ['src/auth/login.ts', 'src/auth/logout.ts', 'src/utils/helpers.ts'];
-      await createClaim(db, {
-        session_id: session.id,
-        files: expectedFiles,
-        intent: 'Auth refactoring',
-        scope: 'large',
       });
 
       // Act
@@ -138,12 +255,8 @@ describe('Session Tools', () => {
 
       // Assert
       const response = JSON.parse(result.content[0].text);
-      const detail = response.claims_released.details[0];
-
-      expect(detail.files).toEqual(expect.arrayContaining(expectedFiles));
-      expect(detail.files).toHaveLength(expectedFiles.length);
-      expect(detail.intent).toBe('Auth refactoring');
-      expect(detail.scope).toBe('large');
+      expect(response).toHaveProperty('memories_saved');
+      expect(typeof response.memories_saved).toBe('number');
     });
 
     it('should return error for non-existent session', async () => {

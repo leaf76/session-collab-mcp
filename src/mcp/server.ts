@@ -14,18 +14,12 @@ import {
   createToolResult,
   MCP_ERROR_CODES,
 } from './protocol';
-import { sessionTools, handleSessionTool } from './tools/session';
-import { claimTools, handleClaimTool } from './tools/claim';
-import { messageTools, handleMessageTool } from './tools/message';
-import { decisionTools, handleDecisionTool } from './tools/decision';
-import { lspTools, handleLspTool } from './tools/lsp';
-import { historyTools, handleHistoryTool } from './tools/history';
-import { queueTools, handleQueueTool } from './tools/queue';
-import { notificationTools, handleNotificationTool } from './tools/notification';
-import { memoryTools, handleMemoryTool } from './tools/memory';
-import { protectionTools, handleProtectionTool } from './tools/protection';
-import type { AuthContext } from '../auth/types';
-import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS_LITE } from '../constants.js';
+import { sessionTools, handleSessionTool } from './tools/session.js';
+import { claimTools, handleClaimTool } from './tools/claim.js';
+import { memoryTools, handleMemoryTool } from './tools/memory.js';
+import { protectionTools, handleProtectionTool } from './tools/protection.js';
+import type { AuthContext } from '../auth/types.js';
+import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from '../constants.js';
 
 const SERVER_INFO: McpServerInfo = {
   name: SERVER_NAME,
@@ -36,38 +30,12 @@ const CAPABILITIES: McpCapabilities = {
   tools: {},
 };
 
-// Lite mode: Core tools for single-session (focus on memory/context)
-const LITE_TOOL_NAMES = new Set([
-  'collab_session_start',
-  'collab_session_end',
-  'collab_session_list',
-  'collab_status_update',
-  'collab_memory_save',
-  'collab_memory_recall',
-  'collab_memory_active',
-  'collab_memory_clear',
-  'collab_plan_register',
-  'collab_plan_list',
-  'collab_plan_get',
-  'collab_decision_add',
-  'collab_decision_list',
-]);
+// 9 core tools: session (4) + claim (1) + memory (3) + protect (1)
 
-// All tools combined
-const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...messageTools, ...decisionTools, ...lspTools, ...historyTools, ...queueTools, ...notificationTools, ...memoryTools, ...protectionTools];
+// All tools combined (now only 10 core tools)
+const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...memoryTools, ...protectionTools];
 
-// Lite mode tools (filtered)
-const LITE_TOOLS: McpTool[] = ALL_TOOLS.filter(t => LITE_TOOL_NAMES.has(t.name));
-
-export type ServerMode = 'lite' | 'full';
-
-export async function detectServerMode(db: DatabaseAdapter): Promise<ServerMode> {
-  const result = await db
-    .prepare("SELECT COUNT(*) as count FROM sessions WHERE status = 'active'")
-    .first<{ count: number }>();
-  const activeCount = result?.count ?? 0;
-  return activeCount > 1 ? 'full' : 'lite';
-}
+// Server mode detection removed - now single unified mode with 10 tools
 
 export class McpServer {
   private authContext?: AuthContext;
@@ -106,20 +74,16 @@ export class McpServer {
   }
 
   private async handleInitialize(id: string | number | undefined): Promise<JsonRpcResponse> {
-    const mode = await detectServerMode(this.db);
-    const instructions = mode === 'lite' ? SERVER_INSTRUCTIONS_LITE : SERVER_INSTRUCTIONS;
     return createSuccessResponse(id, {
       protocolVersion: '2024-11-05',
       serverInfo: SERVER_INFO,
       capabilities: CAPABILITIES,
-      instructions,
+      instructions: SERVER_INSTRUCTIONS,
     });
   }
 
   private async handleToolsList(id: string | number | undefined): Promise<JsonRpcResponse> {
-    const mode = await detectServerMode(this.db);
-    const tools = mode === 'lite' ? LITE_TOOLS : ALL_TOOLS;
-    return createSuccessResponse(id, { tools });
+    return createSuccessResponse(id, { tools: ALL_TOOLS });
   }
 
   private async handleToolCall(
@@ -134,32 +98,14 @@ export class McpServer {
     const userId = this.authContext?.userId !== 'legacy' ? this.authContext?.userId : undefined;
 
     try {
-      // Route to appropriate handler
-      if (name.startsWith('collab_session_') || name === 'collab_status_update' || name === 'collab_config') {
+      // Route to appropriate handler (10 core tools)
+      if (name.startsWith('collab_session_') || name === 'collab_config' || name === 'collab_status') {
         result = await handleSessionTool(this.db, name, args, userId);
-      } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release' || name === 'collab_auto_release') {
-        // Includes: collab_claim, collab_claims_list, collab_claim_update_priority, collab_check, collab_release, collab_auto_release
+      } else if (name === 'collab_claim') {
         result = await handleClaimTool(this.db, name, args);
-      } else if (name.startsWith('collab_message_')) {
-        result = await handleMessageTool(this.db, name, args);
-      } else if (name.startsWith('collab_decision_')) {
-        result = await handleDecisionTool(this.db, name, args);
-      } else if (
-        name === 'collab_analyze_symbols' ||
-        name === 'collab_validate_symbols' ||
-        name === 'collab_store_references' ||
-        name === 'collab_impact_analysis'
-      ) {
-        result = await handleLspTool(this.db, name, args);
-      } else if (name === 'collab_history_list') {
-        result = await handleHistoryTool(this.db, name, args);
-      } else if (name.startsWith('collab_queue_')) {
-        result = await handleQueueTool(this.db, name, args);
-      } else if (name.startsWith('collab_notifications_')) {
-        result = await handleNotificationTool(this.db, name, args);
       } else if (name.startsWith('collab_memory_')) {
         result = await handleMemoryTool(this.db, name, args);
-      } else if (name.startsWith('collab_plan_') || name.startsWith('collab_file_')) {
+      } else if (name === 'collab_protect') {
         result = await handleProtectionTool(this.db, name, args);
       } else {
         result = createToolResult(`Unknown tool: ${name}`, true);
@@ -188,11 +134,6 @@ export function getMcpTools(): McpTool[] {
   return ALL_TOOLS;
 }
 
-export async function getMcpToolsForMode(db: DatabaseAdapter): Promise<McpTool[]> {
-  const mode = await detectServerMode(db);
-  return mode === 'lite' ? LITE_TOOLS : ALL_TOOLS;
-}
-
 // Handle MCP tool call for CLI
 export async function handleMcpRequest(
   db: DatabaseAdapter,
@@ -200,31 +141,13 @@ export async function handleMcpRequest(
   args: Record<string, unknown>
 ): Promise<McpToolResult> {
   try {
-    if (name.startsWith('collab_session_') || name === 'collab_status_update' || name === 'collab_config') {
+    if (name.startsWith('collab_session_') || name === 'collab_config' || name === 'collab_status') {
       return await handleSessionTool(db, name, args);
-    } else if (name.startsWith('collab_claim') || name === 'collab_check' || name === 'collab_release' || name === 'collab_auto_release') {
-      // Includes: collab_claim, collab_claims_list, collab_claim_update_priority, collab_check, collab_release, collab_auto_release
+    } else if (name === 'collab_claim') {
       return await handleClaimTool(db, name, args);
-    } else if (name.startsWith('collab_message_')) {
-      return await handleMessageTool(db, name, args);
-    } else if (name.startsWith('collab_decision_')) {
-      return await handleDecisionTool(db, name, args);
-    } else if (
-      name === 'collab_analyze_symbols' ||
-      name === 'collab_validate_symbols' ||
-      name === 'collab_store_references' ||
-      name === 'collab_impact_analysis'
-    ) {
-      return await handleLspTool(db, name, args);
-    } else if (name === 'collab_history_list') {
-      return await handleHistoryTool(db, name, args);
-    } else if (name.startsWith('collab_queue_')) {
-      return await handleQueueTool(db, name, args);
-    } else if (name.startsWith('collab_notifications_')) {
-      return await handleNotificationTool(db, name, args);
     } else if (name.startsWith('collab_memory_')) {
       return await handleMemoryTool(db, name, args);
-    } else if (name.startsWith('collab_plan_') || name.startsWith('collab_file_')) {
+    } else if (name === 'collab_protect') {
       return await handleProtectionTool(db, name, args);
     } else {
       return createToolResult(`Unknown tool: ${name}`, true);

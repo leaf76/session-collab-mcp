@@ -21,8 +21,9 @@ Session Collab MCP provides a **Work-in-Progress (WIP) Registry** that allows se
 
 1. **Declare** - Announce which files you're about to modify
 2. **Check** - Verify no other session is working on the same files
-3. **Communicate** - Send messages between sessions
-4. **Release** - Free files when done
+3. **Persist** - Save context that survives context compaction
+4. **Protect** - Guard critical files from accidental changes
+5. **Release** - Free files when done
 
 ## Installation
 
@@ -76,23 +77,24 @@ Once installed, Claude will:
 3. Warn you if another session is working on the same files
 4. Clean up when the conversation ends
 
-### Symbol-Level Claims
+### Working Memory
 
-Fine-grained conflict detection at the function/class level:
+Context persistence that survives context compaction:
 
-```
-Session A claims: validateToken() in auth.ts
-Session B wants: refreshToken() in auth.ts
-Result: No conflict! Different symbols in same file.
-```
+- **Findings**: Bug root causes, investigation results
+- **Decisions**: Architectural choices, design decisions
+- **State**: Current implementation status
+- **Todos**: Action items and tasks
+- **Important**: Critical information to preserve
+- **Context**: Background context for the session
 
-### LSP Integration
+### File Protection
 
-Works with Claude Code's LSP tools for:
+Guard critical files from accidental changes:
 
-- Accurate symbol validation (no typos in claims)
-- Impact analysis (know which files reference your changes)
-- Smart prioritization (focus on low-impact changes first)
+- Register protected files with reasons and priorities
+- Automatic conflict detection for protected files
+- Configurable protection levels
 
 ### Conflict Handling Modes
 
@@ -115,91 +117,115 @@ Configure behavior with `collab_config`:
 
 ## MCP Tools Reference
 
-### Session Management
+### Session Management (4 tools)
 
 | Tool | Purpose |
 |------|---------|
 | `collab_session_start` | Register a new session |
 | `collab_session_end` | End session and release all claims |
 | `collab_session_list` | List active sessions |
-| `collab_session_heartbeat` | Update session heartbeat |
-| `collab_status_update` | Share current work status |
-| `collab_config` | Configure conflict handling mode |
+| `collab_config` | Configure session behavior |
 
-### Claims (File/Symbol Locking)
+### Claims (1 unified tool)
+
+| Tool | Actions |
+|------|---------|
+| `collab_claim` | `create`, `check`, `release`, `list` |
+
+### Working Memory (3 tools)
 
 | Tool | Purpose |
 |------|---------|
-| `collab_claim` | Reserve files or symbols before modifying |
-| `collab_check` | Check if files/symbols are claimed by others |
-| `collab_release` | Release claimed files/symbols |
-| `collab_auto_release` | Auto-release claims after editing a file |
-| `collab_claims_list` | List all WIP claims |
+| `collab_memory_save` | Save context (upsert) |
+| `collab_memory_recall` | Recall context |
+| `collab_memory_clear` | Clear memories |
 
-### Inter-Session Communication
+### Protection (1 unified tool)
+
+| Tool | Actions |
+|------|---------|
+| `collab_protect` | `register`, `check`, `list` |
+
+### Status Monitoring
 
 | Tool | Purpose |
 |------|---------|
-| `collab_message_send` | Send message to other sessions |
-| `collab_message_list` | Read messages |
-
-### Architectural Decisions
-
-| Tool | Purpose |
-|------|---------|
-| `collab_decision_add` | Record design decisions |
-| `collab_decision_list` | View recorded decisions |
-
-### LSP Integration (Advanced)
-
-| Tool | Purpose |
-|------|---------|
-| `collab_analyze_symbols` | Analyze LSP symbols for conflict detection |
-| `collab_validate_symbols` | Validate symbol names before claiming |
-| `collab_store_references` | Store LSP reference data for impact tracking |
-| `collab_impact_analysis` | Analyze impact of modifying a symbol |
+| `collab_status` | Unified session status |
 
 ## Usage Examples
 
 ### Basic Workflow
 
-```
+```bash
 # Session A starts working
 collab_session_start(project_root="/my/project", name="feature-auth")
-collab_claim(files=["src/auth.ts"], intent="Adding JWT support")
+collab_claim(action="create", files=["src/auth.ts"], intent="Adding JWT support")
 
 # Session B checks before editing
-collab_check(files=["src/auth.ts"])
-# Result: "src/auth.ts is being worked on by 'feature-auth' - Adding JWT support"
+collab_claim(action="check", files=["src/auth.ts"])
+# Result: "CONFLICT: src/auth.ts is claimed by 'feature-auth'"
 
 # Session A finishes
-collab_release(claim_id="...", status="completed", summary="Added JWT validation")
+collab_claim(action="release", claim_id="...")
 ```
 
-### Symbol-Level Claims
+### Working Memory
 
-```
-# Claim specific functions only
-collab_claim(
-  symbols=[{file: "src/auth.ts", symbols: ["validateToken", "refreshToken"]}],
-  intent="Refactoring token validation"
+```bash
+# Save a finding
+collab_memory_save(
+  category="finding",
+  key="auth_bug_root_cause",
+  content="Missing token validation in refresh flow",
+  priority=80
 )
 
-# Other sessions can still work on other functions in the same file
+# Recall active memories
+collab_memory_recall(active=true, priority_threshold=70)
 ```
 
-### Impact Analysis
+### File Protection
 
+```bash
+# Protect critical file
+collab_protect(
+  action="register",
+  file_path="src/core/auth.ts",
+  reason="Core authentication logic",
+  priority=95
+)
+
+# Check before editing
+collab_protect(
+  action="check",
+  file_paths=["src/core/auth.ts"]
+)
+# Result: "BLOCKED: File is protected - Core authentication logic"
 ```
-# Before modifying a widely-used function
-collab_impact_analysis(file="src/utils.ts", symbol="formatDate")
+
+### Status Monitoring
+
+```bash
+# Get session status
+collab_status(session_id="abc123")
 # Result: {
-#   risk_level: "high",
-#   reference_count: 15,
-#   affected_files: ["src/api/...", "src/components/..."],
-#   message: "HIGH RISK: This symbol is referenced in 15 locations"
+#   session: { id: "abc123", name: "feature-auth", status: "active" },
+#   claims: [...],
+#   active_memories: 5,
+#   message: "Session active. 2 claim(s), 5 memories."
 # }
 ```
+
+## Migration from v1.x
+
+Version 2.0 introduces breaking changes with a simplified API. See [MIGRATION.md](./MIGRATION.md) for detailed migration instructions.
+
+### Key Changes
+
+- **Tool Consolidation**: 50+ tools → 9 core tools
+- **Action-Based Interface**: Single tools with multiple actions
+- **Simplified Responses**: Cleaner, flatter response formats
+- **Removed Features**: LSP integration, messaging, notifications, queuing
 
 ## Data Storage
 
@@ -241,54 +267,32 @@ npm run test         # Run tests with Vitest
 session-collab-mcp/
 ├── bin/                    # Executable entry point
 ├── migrations/             # SQLite migration files
-│   ├── 0001_init.sql           # Core tables
-│   ├── 0002_session_status.sql # Session status
-│   ├── 0003_config.sql         # Session config
-│   ├── 0004_symbols.sql        # Symbol-level claims
-│   ├── 0005_references.sql     # Reference tracking
-│   ├── 0006_composite_indexes.sql # Query optimization
-│   ├── 0007_priority.sql       # Claim priority
-│   ├── 0008_history.sql        # Audit history
-│   ├── 0009_queue.sql          # Claim queue
-│   ├── 0010_notifications.sql  # Notifications
-│   └── 0011_working_memory.sql # Working memory & plan protection
 ├── plugin/                 # Claude Code Plugin
-│   ├── .claude-plugin/
-│   │   ├── plugin.json         # Plugin manifest
-│   │   └── marketplace.json    # Marketplace config
-│   ├── .mcp.json               # MCP server config
-│   ├── hooks/
-│   │   └── hooks.json          # Automated hooks
-│   ├── skills/
-│   │   └── collab-start/       # Session init skill
-│   │       └── SKILL.md
-│   ├── commands/
-│   │   ├── status.md           # /session-collab:status
-│   │   └── end.md              # /session-collab:end
-│   └── README.md
 ├── src/
 │   ├── cli.ts             # CLI entry point
 │   ├── constants.ts       # Version and server instructions
 │   ├── db/                # Database layer
-│   │   ├── queries.ts     # SQL queries
-│   │   ├── sqlite-adapter.ts
-│   │   └── types.ts       # Type definitions
 │   ├── mcp/               # MCP protocol implementation
-│   │   ├── protocol.ts    # JSON-RPC handling
-│   │   ├── server.ts      # Main MCP server
-│   │   └── tools/         # Tool implementations
-│   │       ├── session.ts # Session management
-│   │       ├── claim.ts   # File/symbol claims
-│   │       ├── message.ts # Inter-session messaging
-│   │       ├── decision.ts# Decision logging
-│   │       └── lsp.ts     # LSP integration
+│   │   ├── tools/         # Tool implementations
+│   │   │   ├── session.ts # Session management
+│   │   │   ├── claim.ts   # File/symbol claims
+│   │   │   ├── memory.ts  # Working memory
+│   │   │   └── protection.ts # File protection
+│   │   └── ...
 │   └── utils/
-│       ├── crypto.ts      # Hash utilities
-│       └── response.ts    # Shared response builders
 └── package.json
 ```
 
 ## Changelog
+
+### v2.0.0 (Breaking)
+
+- **Major Simplification**: Reduced from 50+ tools to 9 core tools
+- **Action-Based Design**: Unified tools with action parameters
+- **Removed Features**: LSP integration, messaging, notifications, queuing, decision tracking
+- **Improved Performance**: Faster startup and reduced complexity
+- **Better Testing**: Comprehensive test coverage for all tool actions
+- **Migration Guide**: Detailed upgrade path from v1.x
 
 ### v0.8.0
 

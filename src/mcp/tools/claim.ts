@@ -1,12 +1,11 @@
-// Claim management tools (WIP declarations)
+// Claim management tools (unified action-based)
 
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol.js';
 import { createToolResult } from '../protocol.js';
 import type { SessionConfig } from '../../db/types.js';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
-import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, releaseClaimByFile, getClaimInfoByFile, getSession, updateClaimPriority, logAuditEvent, notifyQueueOnClaimRelease, saveMemory, clearMemory, registerPlan } from '../../db/queries.js';
-import { claimCreateSchema, claimCheckSchema, claimReleaseSchema, claimListSchema, claimUpdatePrioritySchema, autoReleaseSchema, validateInput } from '../schemas.js';
+import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession, logAuditEvent, saveMemory, clearMemory } from '../../db/queries.js';
 import { getPriorityLevel } from '../../db/types.js';
 import {
   errorResponse,
@@ -19,11 +18,19 @@ import {
 export const claimTools: McpTool[] = [
   {
     name: 'collab_claim',
-    description:
-      'Declare files or specific symbols (functions/classes) you are about to modify. Use symbols for fine-grained claims that allow other sessions to work on different parts of the same file.',
+    description: `Unified tool for file/symbol claims. Use action parameter to:
+- "create": Declare files you're about to modify
+- "check": Check if files are being worked on (ALWAYS call before editing)
+- "release": Release a claim when done
+- "list": List all active claims`,
     inputSchema: {
       type: 'object',
       properties: {
+        action: {
+          type: 'string',
+          enum: ['create', 'check', 'release', 'list'],
+          description: 'Action to perform',
+        },
         session_id: {
           type: 'string',
           description: 'Your session ID',
@@ -31,182 +38,27 @@ export const claimTools: McpTool[] = [
         files: {
           type: 'array',
           items: { type: 'string' },
-          description: "File paths to claim. Supports glob patterns like 'src/api/*'. Use this for whole-file claims.",
-        },
-        symbols: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              file: { type: 'string', description: 'File path containing the symbols' },
-              symbols: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Symbol names (function, class, method names) to claim',
-              },
-              symbol_type: {
-                type: 'string',
-                enum: ['function', 'class', 'method', 'variable', 'block', 'other'],
-                description: 'Type of symbols being claimed (default: function)',
-              },
-            },
-            required: ['file', 'symbols'],
-          },
-          description: 'Symbol-level claims for fine-grained conflict detection. Use this instead of files when you only need to modify specific functions/classes.',
+          description: 'File paths (for create/check actions)',
         },
         intent: {
           type: 'string',
-          description: 'What you plan to do with these files/symbols',
-        },
-        scope: {
-          type: 'string',
-          enum: ['small', 'medium', 'large'],
-          description: 'Estimated scope: small(<30min), medium(30min-2hr), large(>2hr)',
-        },
-        priority: {
-          type: 'number',
-          description: 'Priority (0-100). Levels: critical (90-100), high (70-89), normal (40-69, default: 50), low (0-39)',
-        },
-      },
-      required: ['session_id', 'intent'],
-    },
-  },
-  {
-    name: 'collab_check',
-    description:
-      'Check if files or symbols are being worked on by other sessions. ALWAYS call this before modifying files. Supports symbol-level checking for fine-grained conflict detection.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        files: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'File paths to check',
-        },
-        symbols: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              file: { type: 'string', description: 'File path containing the symbols' },
-              symbols: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Symbol names to check for conflicts',
-              },
-            },
-            required: ['file', 'symbols'],
-          },
-          description: 'Symbol-level check. If provided, only checks for conflicts with these specific symbols.',
-        },
-        session_id: {
-          type: 'string',
-          description: 'Your session ID (to exclude your own claims from results)',
-        },
-      },
-      required: ['files'],
-    },
-  },
-  {
-    name: 'collab_release',
-    description: 'Release a claim when done or abandoning work. By default you can only release your own claims. Use force=true with user confirmation to release stale claims from other sessions.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Your session ID (required to verify ownership)',
+          description: 'What you plan to do (for create action)',
         },
         claim_id: {
           type: 'string',
-          description: 'Claim ID to release',
+          description: 'Claim ID (for release action)',
         },
         status: {
           type: 'string',
           enum: ['completed', 'abandoned'],
-          description: 'Whether work was completed or abandoned',
-        },
-        summary: {
-          type: 'string',
-          description: 'Optional summary of what was done (for completed claims)',
+          description: 'Release status (for release action)',
         },
         force: {
           type: 'boolean',
-          description: 'Force release even if claim belongs to another session (requires user confirmation)',
+          description: 'Force release even if not owner (for release action)',
         },
       },
-      required: ['session_id', 'claim_id', 'status'],
-    },
-  },
-  {
-    name: 'collab_claims_list',
-    description: 'List all WIP claims. Use to see what files are being worked on.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Filter by session ID',
-        },
-        status: {
-          type: 'string',
-          enum: ['active', 'completed', 'abandoned', 'all'],
-          description: 'Filter by claim status',
-        },
-        project_root: {
-          type: 'string',
-          description: 'Filter by project root',
-        },
-      },
-    },
-  },
-  {
-    name: 'collab_claim_update_priority',
-    description: 'Update the priority of an existing claim. Higher priority claims take precedence in queue ordering.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Your session ID',
-        },
-        claim_id: {
-          type: 'string',
-          description: 'Claim ID to update',
-        },
-        priority: {
-          type: 'number',
-          description: 'New priority (0-100). Levels: critical (90-100), high (70-89), normal (40-69), low (0-39)',
-        },
-        reason: {
-          type: 'string',
-          description: 'Optional reason for priority change',
-        },
-      },
-      required: ['session_id', 'claim_id', 'priority'],
-    },
-  },
-  {
-    name: 'collab_auto_release',
-    description:
-      'Automatically release claims for a file after editing. Call this after Edit/Write operations to release the claim for the edited file. For small scope claims, releases immediately. For medium/large scope claims, requires force=true or auto_release_immediate config.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        session_id: {
-          type: 'string',
-          description: 'Your session ID',
-        },
-        file_path: {
-          type: 'string',
-          description: 'The file that was just edited',
-        },
-        force: {
-          type: 'boolean',
-          description: 'Force release even for medium/large scope claims',
-        },
-      },
-      required: ['session_id', 'file_path'],
+      required: ['action', 'session_id'],
     },
   },
 ];
@@ -216,17 +68,28 @@ export async function handleClaimTool(
   name: string,
   args: Record<string, unknown>
 ): Promise<McpToolResult> {
-  switch (name) {
-    case 'collab_claim': {
-      // Validate input with Zod schema
-      const validation = validateInput(claimCreateSchema, args);
-      if (!validation.success) {
-        return validationError(validation.error);
-      }
+  if (name !== 'collab_claim') {
+    return createToolResult(`Unknown tool: ${name}`, true);
+  }
 
-      const { session_id: sessionId, files, symbols, intent, scope = 'medium', priority = 50 } = validation.data;
-      const hasSymbols = symbols && symbols.length > 0;
-      const priorityInfo = getPriorityLevel(priority);
+  const action = args.action as string;
+  const sessionId = args.session_id as string;
+
+  if (!action || !sessionId) {
+    return validationError('action and session_id are required');
+  }
+
+  switch (action) {
+    case 'create': {
+      const files = args.files as string[] | undefined;
+      const intent = args.intent as string | undefined;
+
+      if (!intent) {
+        return validationError('intent is required for create action');
+      }
+      if (!files || files.length === 0) {
+        return validationError('files array is required for create action');
+      }
 
       // Verify session exists and is active
       const sessionResult = await validateActiveSession(db, sessionId);
@@ -234,640 +97,174 @@ export async function handleClaimTool(
         return sessionResult.error;
       }
 
-      // Build file list from both files and symbols
-      const allFiles = new Set<string>(files ?? []);
-      if (hasSymbols) {
-        for (const sc of symbols!) {
-          allFiles.add(sc.file);
-        }
-      }
-      const fileList = Array.from(allFiles);
-
-      // Create the claim FIRST (atomic operation)
-      // This ensures our claim is registered before checking conflicts
+      // Create the claim
       const { claim } = await createClaim(db, {
         session_id: sessionId,
-        files: fileList,
+        files,
         intent,
-        scope,
-        priority,
-        symbols: hasSymbols ? symbols : undefined,
+        scope: 'medium',
+        priority: 50,
       });
 
-      // Log audit event for claim creation
+      // Log audit event
       await logAuditEvent(db, {
         session_id: sessionId,
         action: 'claim_created',
         entity_type: 'claim',
         entity_id: claim.id,
-        metadata: { files: fileList, intent, scope, priority },
+        metadata: { files, intent },
       });
 
-      // Auto-save claim info to working memory for context persistence
+      // Auto-save to memory
       await saveMemory(db, sessionId, {
         category: 'state',
         key: `claim_${claim.id}`,
-        content: `Working on: ${intent}\nFiles: ${fileList.join(', ')}${hasSymbols ? `\nSymbols: ${symbols!.map(s => `${s.file}:[${s.symbols.join(',')}]`).join(', ')}` : ''}`,
+        content: `Working on: ${intent}\nFiles: ${files.join(', ')}`,
         priority: 60,
         related_claim_id: claim.id,
-        metadata: {
-          claim_id: claim.id,
-          files: fileList,
-          symbols: hasSymbols ? symbols : undefined,
-          scope,
-        },
+        metadata: { claim_id: claim.id, files },
       });
 
-      // AUTO-REGISTER: Detect and register plan files automatically
-      const autoRegistered: string[] = [];
-      for (const file of fileList) {
-        const lowerFile = file.toLowerCase();
-        // Detect plan-like files: *.md files with plan/design/spec/proposal in name or path
-        const isPlanLike = (lowerFile.endsWith('.md') || lowerFile.endsWith('.txt')) &&
-          (lowerFile.includes('plan') || lowerFile.includes('design') ||
-           lowerFile.includes('spec') || lowerFile.includes('proposal') ||
-           lowerFile.includes('rfc') || lowerFile.includes('adr'));
-
-        if (isPlanLike) {
-          try {
-            await registerPlan(db, sessionId, {
-              file_path: file,
-              title: `Plan: ${file.split('/').pop() || file}`,
-              content_summary: intent,
-              status: 'in_progress',
-            });
-            autoRegistered.push(file);
-          } catch {
-            // Ignore if already registered
-          }
-        }
-      }
-
-      // Check for conflicts AFTER creating claim
-      // This eliminates race condition: if two sessions claim simultaneously,
-      // both will see each other's claims and can coordinate
-      const conflicts = await checkConflicts(db, fileList, sessionId, symbols);
+      // Check for conflicts
+      const conflicts = await checkConflicts(db, files, sessionId);
 
       if (conflicts.length > 0) {
-        // Log conflict detection
-        for (const conflict of conflicts) {
-          await logAuditEvent(db, {
-            session_id: sessionId,
-            action: 'conflict_detected',
-            entity_type: 'claim',
-            entity_id: claim.id,
-            metadata: {
-              conflicting_session_id: conflict.session_id,
-              conflicting_session_name: conflict.session_name ?? undefined,
-              files: [conflict.file_path],
-            },
-          });
-        }
-
-        // Group conflicts by type (file vs symbol)
-        const fileConflicts = conflicts.filter((c) => c.conflict_level === 'file');
-        const symbolConflicts = conflicts.filter((c) => c.conflict_level === 'symbol');
-
-        const conflictDetails = {
-          file_level: fileConflicts.map((c) => ({
-            session_name: c.session_name,
-            file: c.file_path,
-            intent: c.intent,
-          })),
-          symbol_level: symbolConflicts.map((c) => ({
-            session_name: c.session_name,
-            file: c.file_path,
-            symbol: c.symbol_name,
-            symbol_type: c.symbol_type,
-            intent: c.intent,
-          })),
-        };
-
-        return createToolResult(
-          JSON.stringify(
-            {
-              claim_id: claim.id,
-              status: 'created_with_conflicts',
-              files: fileList,
-              symbols: hasSymbols ? symbols : undefined,
-              conflicts: conflictDetails,
-              warning: `⚠️ Conflicts detected: ${fileConflicts.length} file-level, ${symbolConflicts.length} symbol-level. Coordinate before proceeding.`,
-              auto_registered_plans: autoRegistered.length > 0 ? autoRegistered : undefined,
-            },
-            null,
-            2
-          )
-        );
-      }
-
-      return createToolResult(
-        JSON.stringify({
+        return successResponse({
           claim_id: claim.id,
-          status: 'created',
-          files: fileList,
-          symbols: hasSymbols ? symbols : undefined,
-          intent,
-          scope,
-          priority: priorityInfo,
-          message: hasSymbols
-            ? 'Symbol-level claim created. Other sessions can work on different symbols in the same file.'
-            : 'Claim created successfully. Other sessions will be warned about these files.',
-          auto_registered_plans: autoRegistered.length > 0 ? autoRegistered : undefined,
-          auto_registered_note: autoRegistered.length > 0
-            ? `Auto-protected ${autoRegistered.length} plan file(s). Use collab_plan_update_status to manage lifecycle.`
-            : undefined,
-        })
-      );
-    }
-
-    case 'collab_check': {
-      // Validate input with Zod schema
-      const validation = validateInput(claimCheckSchema, args);
-      if (!validation.success) {
-        return validationError(validation.error);
-      }
-
-      const { files, symbols, session_id: sessionId } = validation.data;
-
-      // Check todos status if session_id provided
-      let hasInProgressTodo = false;
-      let todosStatus: { total: number; in_progress: number; completed: number; pending: number } | null = null;
-      if (sessionId) {
-        const session = await getSession(db, sessionId);
-        if (session?.todos) {
-          try {
-            const todos = JSON.parse(session.todos) as Array<{ status: string }>;
-            const inProgress = todos.filter((t) => t.status === 'in_progress').length;
-            const completed = todos.filter((t) => t.status === 'completed').length;
-            const pending = todos.filter((t) => t.status === 'pending').length;
-            hasInProgressTodo = inProgress > 0;
-            todosStatus = {
-              total: todos.length,
-              in_progress: inProgress,
-              completed,
-              pending,
-            };
-          } catch {
-            // Ignore parse errors
-          }
-        }
-      }
-
-      const hasSymbols = symbols && Array.isArray(symbols) && symbols.length > 0;
-      const conflicts = await checkConflicts(db, files, sessionId, hasSymbols ? symbols : undefined);
-
-      // Build per-file status (considering both file and symbol conflicts)
-      const blockedFiles = new Set<string>();
-      const blockedSymbols = new Map<string, Set<string>>(); // file -> symbols
-
-      for (const c of conflicts) {
-        if (c.conflict_level === 'file') {
-          blockedFiles.add(c.file_path);
-        } else if (c.conflict_level === 'symbol' && c.symbol_name) {
-          const existing = blockedSymbols.get(c.file_path) ?? new Set();
-          existing.add(c.symbol_name);
-          blockedSymbols.set(c.file_path, existing);
-        }
-      }
-
-      // For symbol-level check, determine safe symbols
-      let safeSymbols: Array<{ file: string; symbols: string[] }> = [];
-      let blockedSymbolsList: Array<{ file: string; symbols: string[] }> = [];
-
-      if (hasSymbols) {
-        for (const sc of symbols!) {
-          const blocked = blockedSymbols.get(sc.file) ?? new Set();
-          const safe = sc.symbols.filter((s) => !blocked.has(s));
-          const blockedList = sc.symbols.filter((s) => blocked.has(s));
-
-          if (safe.length > 0) {
-            safeSymbols.push({ file: sc.file, symbols: safe });
-          }
-          if (blockedList.length > 0) {
-            blockedSymbolsList.push({ file: sc.file, symbols: blockedList });
-          }
-        }
-      }
-
-      const safeFiles = files.filter((f) => !blockedFiles.has(f) && !blockedSymbols.has(f));
-      const blockedFilesList = files.filter((f) => blockedFiles.has(f));
-
-      // Determine recommendation for Claude's auto-decision
-      type Recommendation = 'proceed_all' | 'proceed_safe_only' | 'abort';
-      let recommendation: Recommendation;
-      let canEdit: boolean;
-
-      const hasSafeContent = safeFiles.length > 0 || safeSymbols.length > 0;
-
-      if (conflicts.length === 0) {
-        recommendation = 'proceed_all';
-        canEdit = true;
-      } else if (hasSafeContent) {
-        recommendation = 'proceed_safe_only';
-        canEdit = true;
-      } else {
-        recommendation = 'abort';
-        canEdit = false;
-      }
-
-      if (conflicts.length === 0) {
-        return createToolResult(
-          JSON.stringify({
-            has_conflicts: false,
-            safe: true,
-            can_edit: true,
-            recommendation: 'proceed_all',
-            file_status: {
-              safe: files,
-              blocked: [],
-            },
-            symbol_status: hasSymbols ? { safe: symbols, blocked: [] } : undefined,
-            message: hasSymbols
-              ? 'All symbols are safe to edit. Proceed.'
-              : 'All files are safe to edit. Proceed.',
-            has_in_progress_todo: hasInProgressTodo,
-            todos_status: todosStatus,
-          })
-        );
-      }
-
-      // Group conflicts by session for clearer output
-      const bySession = new Map<string, typeof conflicts>();
-      for (const c of conflicts) {
-        const key = c.session_id;
-        const existing = bySession.get(key) ?? [];
-        existing.push(c);
-        bySession.set(key, existing);
-      }
-
-      const conflictDetails = Array.from(bySession.entries()).map(([sessId, items]) => {
-        const fileItems = items.filter((i) => i.conflict_level === 'file');
-        const symbolItems = items.filter((i) => i.conflict_level === 'symbol');
-
-        return {
-          session_id: sessId,
-          session_name: items[0].session_name,
-          intent: items[0].intent,
-          scope: items[0].scope,
-          files: fileItems.map((i) => i.file_path),
-          symbols: symbolItems.map((i) => ({
-            file: i.file_path,
-            symbol: i.symbol_name,
-            type: i.symbol_type,
+          status: 'created_with_conflicts',
+          files,
+          conflicts: conflicts.map(c => ({
+            session_name: c.session_name,
+            file: c.file_path,
+            intent: c.intent,
           })),
-          started_at: items[0].created_at,
-        };
-      });
-
-      // Build actionable message based on recommendation
-      let message: string;
-      if (recommendation === 'proceed_safe_only') {
-        if (hasSymbols && safeSymbols.length > 0) {
-          const safeDesc = safeSymbols.map((s) => `${s.file}:[${s.symbols.join(',')}]`).join(', ');
-          const blockedDesc = blockedSymbolsList.map((s) => `${s.file}:[${s.symbols.join(',')}]`).join(', ');
-          message = `Edit ONLY these safe symbols: ${safeDesc}. Skip blocked: ${blockedDesc}.`;
-        } else {
-          message = `Edit ONLY these safe files: [${safeFiles.join(', ')}]. Skip blocked files: [${blockedFilesList.join(', ')}].`;
-        }
-      } else {
-        message = hasSymbols
-          ? `All requested symbols are blocked. Coordinate with other session(s) or wait.`
-          : `All ${files.length} file(s) are blocked. Coordinate with other session(s) or wait.`;
+          warning: `⚠️ ${conflicts.length} conflict(s) detected. Coordinate before proceeding.`,
+        });
       }
 
-      return createToolResult(
-        JSON.stringify(
-          {
-            has_conflicts: true,
-            safe: false,
-            can_edit: canEdit,
-            recommendation,
-            file_status: {
-              safe: safeFiles,
-              blocked: blockedFilesList,
-            },
-            symbol_status: hasSymbols
-              ? {
-                  safe: safeSymbols,
-                  blocked: blockedSymbolsList,
-                }
-              : undefined,
-            conflicts: conflictDetails,
-            message,
-            has_in_progress_todo: hasInProgressTodo,
-            todos_status: todosStatus,
-          },
-          null,
-          2
-        )
-      );
+      return successResponse({
+        claim_id: claim.id,
+        status: 'created',
+        files,
+        intent,
+        message: 'Claim created successfully.',
+      });
     }
 
-    case 'collab_release': {
-      // Validate input with Zod schema
-      const validation = validateInput(claimReleaseSchema, args);
-      if (!validation.success) {
-        return validationError(validation.error);
+    case 'check': {
+      const files = args.files as string[] | undefined;
+
+      if (!files || files.length === 0) {
+        return validationError('files array is required for check action');
       }
 
-      const { session_id: sessionId, claim_id: claimId, status, summary, force } = validation.data;
+      const conflicts = await checkConflicts(db, files, sessionId);
+
+      if (conflicts.length === 0) {
+        return successResponse({
+          has_conflicts: false,
+          can_edit: true,
+          recommendation: 'proceed',
+          safe_files: files,
+          message: 'All files are safe to edit. Proceed.',
+        });
+      }
+
+      const blockedFiles = new Set(conflicts.map(c => c.file_path));
+      const safeFiles = files.filter(f => !blockedFiles.has(f));
+
+      return successResponse({
+        has_conflicts: true,
+        can_edit: safeFiles.length > 0,
+        recommendation: safeFiles.length > 0 ? 'proceed_safe_only' : 'abort',
+        safe_files: safeFiles,
+        blocked_files: Array.from(blockedFiles),
+        conflicts: conflicts.map(c => ({
+          session_name: c.session_name,
+          file: c.file_path,
+          intent: c.intent,
+        })),
+        message: safeFiles.length > 0
+          ? `Edit ONLY safe files: [${safeFiles.join(', ')}]. Skip blocked files.`
+          : 'All files blocked. Coordinate with other session(s).',
+      });
+    }
+
+    case 'release': {
+      const claimId = args.claim_id as string | undefined;
+      const status = (args.status as string) || 'completed';
+      const force = args.force as boolean | undefined;
+
+      if (!claimId) {
+        return validationError('claim_id is required for release action');
+      }
 
       const claim = await getClaim(db, claimId);
       if (!claim) {
-        return errorResponse(
-          ERROR_CODES.CLAIM_NOT_FOUND,
-          'Claim not found. It may have already been released.'
-        );
+        return errorResponse(ERROR_CODES.CLAIM_NOT_FOUND, 'Claim not found');
       }
 
-      // Check ownership - only allow releasing your own claims unless config allows or force=true
-      if (claim.session_id !== sessionId) {
-        // Get caller's session config
+      // Check ownership
+      if (claim.session_id !== sessionId && !force) {
         const callerSession = await getSession(db, sessionId);
         let config: SessionConfig = DEFAULT_SESSION_CONFIG;
         if (callerSession?.config) {
           try {
             config = { ...DEFAULT_SESSION_CONFIG, ...JSON.parse(callerSession.config) };
           } catch {
-            // Use default if parse fails
+            // Use default
           }
         }
 
-        // Check if allowed to release others' claims
-        const canRelease = force === true || config.allow_release_others;
-
-        if (!canRelease) {
-          // Calculate how old the claim is
-          const claimAge = Date.now() - new Date(claim.created_at).getTime();
-          const staleHours = config.stale_threshold_hours;
-          const isStale = claimAge > staleHours * 60 * 60 * 1000;
-
-          return createToolResult(
-            JSON.stringify({
-              error: 'NOT_OWNER',
-              message: 'You can only release your own claims. This claim belongs to another session.',
-              claim_owner: claim.session_name,
-              claim_age_hours: Math.round(claimAge / (60 * 60 * 1000) * 10) / 10,
-              is_stale: isStale,
-              suggestions: [
-                'Use collab_message_send to ask the owner to release it.',
-                isStale ? 'This claim is stale. Ask user for confirmation, then use force=true to release.' : null,
-                'Use collab_config to enable allow_release_others for future releases.',
-              ].filter(Boolean),
-            }),
-            true
+        if (!config.allow_release_others) {
+          return errorResponse(
+            ERROR_CODES.NOT_OWNER,
+            `Not your claim. Owner: ${claim.session_name}. Use force=true to override.`
           );
         }
       }
 
       if (claim.status !== 'active') {
-        return errorResponse(
-          ERROR_CODES.CLAIM_ALREADY_RELEASED,
-          `Claim was already ${claim.status}.`
-        );
+        return errorResponse(ERROR_CODES.CLAIM_ALREADY_RELEASED, `Claim already ${claim.status}`);
       }
 
-      const isOwnClaim = claim.session_id === sessionId;
-      await releaseClaim(db, claimId, { status, summary });
+      await releaseClaim(db, claimId, { status: status as 'completed' | 'abandoned' });
 
-      // Log audit event for claim release
       await logAuditEvent(db, {
         session_id: sessionId,
         action: 'claim_released',
         entity_type: 'claim',
         entity_id: claimId,
-        metadata: { status, files: claim.files },
+        metadata: { status: status as 'completed' | 'abandoned', files: claim.files },
       });
 
-      // Clear claim-related memory when releasing
       await clearMemory(db, claim.session_id, { key: `claim_${claimId}` });
-
-      // If completed with summary, save as a decision/finding for future reference
-      if (status === 'completed' && summary) {
-        await saveMemory(db, sessionId, {
-          category: 'decision',
-          key: `completed_${claimId}`,
-          content: `Completed: ${claim.intent}\nSummary: ${summary}\nFiles: ${claim.files.join(', ')}`,
-          priority: 50,
-          metadata: {
-            claim_id: claimId,
-            files: claim.files,
-            completed_at: new Date().toISOString(),
-          },
-        });
-      }
-
-      // Notify sessions in queue that the claim is released
-      const notifiedCount = await notifyQueueOnClaimRelease(db, claimId, sessionId, claim.files);
-
-      return createToolResult(
-        JSON.stringify({
-          success: true,
-          message: isOwnClaim
-            ? `Claim ${status}. Files are now available for other sessions.`
-            : `Claim from ${claim.session_name} forcefully ${status}.`,
-          files: claim.files,
-          summary: summary ?? null,
-          was_forced: !isOwnClaim,
-          notified_sessions: notifiedCount,
-        })
-      );
-    }
-
-    case 'collab_auto_release': {
-      // Validate input with Zod schema
-      const validation = validateInput(autoReleaseSchema, args);
-      if (!validation.success) {
-        return validationError(validation.error);
-      }
-
-      const { session_id: sessionId, file_path: filePath, force } = validation.data;
-
-      // Verify session exists and is active
-      const sessionResult = await validateActiveSession(db, sessionId);
-      if (!sessionResult.valid) {
-        return sessionResult.error;
-      }
-
-      // Get session config
-      const session = await getSession(db, sessionId);
-      let config: SessionConfig = DEFAULT_SESSION_CONFIG;
-      if (session?.config) {
-        try {
-          config = { ...DEFAULT_SESSION_CONFIG, ...JSON.parse(session.config) };
-        } catch {
-          // Use default if parse fails
-        }
-      }
-
-      // First, get claim info WITHOUT modifying anything
-      const claimInfo = await getClaimInfoByFile(db, sessionId, filePath);
-
-      if (!claimInfo) {
-        return successResponse({
-          released: false,
-          message: 'No active claim found for this file',
-          file_path: filePath,
-        });
-      }
-
-      // Check scope - only auto-release small scope unless forced or config allows
-      // For partial releases (multi-file claims), always allow removing individual files
-      const isPartialRelease = claimInfo.file_count > 1;
-      const shouldAutoRelease =
-        isPartialRelease || claimInfo.scope === 'small' || force === true || config.auto_release_immediate;
-
-      if (!shouldAutoRelease) {
-        // Don't release, just inform (claim info only, no modification)
-        return successResponse({
-          released: false,
-          claim_id: claimInfo.claim_id,
-          scope: claimInfo.scope,
-          file_path: filePath,
-          file_count: claimInfo.file_count,
-          message: `Claim has ${claimInfo.scope} scope. Use force=true or enable auto_release_immediate config to auto-release.`,
-          suggestions: [
-            'Use collab_release with claim_id to release the full claim',
-            'Use collab_config to enable auto_release_immediate',
-            'Use force=true to force auto-release',
-          ],
-        });
-      }
-
-      // Now actually release the claim
-      const result = await releaseClaimByFile(db, sessionId, filePath);
-
-      if (!result.released) {
-        return errorResponse(
-          ERROR_CODES.RELEASE_FAILED,
-          'Failed to release claim. It may have been released by another operation.'
-        );
-      }
-
-      // Log audit event for both full and partial release
-      await logAuditEvent(db, {
-        session_id: sessionId,
-        action: 'claim_released',
-        entity_type: 'claim',
-        entity_id: result.claim_id!,
-        metadata: {
-          status: result.partial ? 'partial' : 'completed',
-          files: [filePath],
-          auto_release: true,
-          partial: result.partial,
-          files_remaining: result.files_remaining,
-        },
-      });
-
-      // Notify sessions in queue if the entire claim was released
-      let notifiedCount = 0;
-      if (!result.partial) {
-        notifiedCount = await notifyQueueOnClaimRelease(db, result.claim_id!, sessionId, claimInfo.files);
-      }
-
-      return successResponse({
-        released: true,
-        claim_id: result.claim_id,
-        file_path: filePath,
-        partial: result.partial,
-        files_remaining: result.files_remaining,
-        notified_sessions: notifiedCount,
-        message: result.partial
-          ? `File released from claim. ${result.files_remaining} file(s) remaining in claim.`
-          : 'Claim released successfully.',
-      });
-    }
-
-    case 'collab_claims_list': {
-      // Validate input with Zod schema (all fields optional)
-      const validation = validateInput(claimListSchema, args);
-      if (!validation.success) {
-        return validationError(validation.error);
-      }
-
-      const { session_id, status = 'active', project_root } = validation.data;
-      const claims = await listClaims(db, { session_id, status, project_root });
-
-      return successResponse({
-        claims: claims.map((c) => ({
-          id: c.id,
-          session_id: c.session_id,
-          session_name: c.session_name,
-          files: c.files,
-          intent: c.intent,
-          scope: c.scope,
-          priority: getPriorityLevel(c.priority),
-          status: c.status,
-          created_at: c.created_at,
-          completed_summary: c.completed_summary,
-        })),
-        total: claims.length,
-      }, true);
-    }
-
-    case 'collab_claim_update_priority': {
-      // Validate input with Zod schema
-      const validation = validateInput(claimUpdatePrioritySchema, args);
-      if (!validation.success) {
-        return validationError(validation.error);
-      }
-
-      const { session_id: sessionId, claim_id: claimId, priority, reason } = validation.data;
-
-      // Verify session is active
-      const sessionResult = await validateActiveSession(db, sessionId);
-      if (!sessionResult.valid) {
-        return sessionResult.error;
-      }
-
-      // Get the claim
-      const claim = await getClaim(db, claimId);
-      if (!claim) {
-        return errorResponse(ERROR_CODES.CLAIM_NOT_FOUND, 'Claim not found');
-      }
-
-      // Verify ownership
-      if (claim.session_id !== sessionId) {
-        return errorResponse(ERROR_CODES.NOT_OWNER, 'You can only update priority of your own claims');
-      }
-
-      if (claim.status !== 'active') {
-        return errorResponse(ERROR_CODES.CLAIM_ALREADY_RELEASED, `Claim is ${claim.status}, cannot update priority`);
-      }
-
-      const oldPriority = getPriorityLevel(claim.priority);
-      const newPriority = getPriorityLevel(priority);
-
-      // Update priority
-      const updated = await updateClaimPriority(db, claimId, priority);
-      if (!updated) {
-        return errorResponse(ERROR_CODES.CLAIM_NOT_FOUND, 'Failed to update priority');
-      }
-
-      // Log audit event for priority change
-      await logAuditEvent(db, {
-        session_id: sessionId,
-        action: 'priority_changed',
-        entity_type: 'claim',
-        entity_id: claimId,
-        metadata: {
-          old_value: claim.priority,
-          new_value: priority,
-          reason,
-        },
-      });
 
       return successResponse({
         success: true,
         claim_id: claimId,
-        old_priority: oldPriority,
-        new_priority: newPriority,
-        reason: reason ?? null,
-        message: `Priority updated from ${oldPriority.level} (${oldPriority.value}) to ${newPriority.level} (${newPriority.value})`,
+        files: claim.files,
+        message: `Claim ${status}. Files now available.`,
+      });
+    }
+
+    case 'list': {
+      const claims = await listClaims(db, { session_id: sessionId, status: 'active' });
+
+      return successResponse({
+        claims: claims.map(c => ({
+          id: c.id,
+          session_name: c.session_name,
+          files: c.files,
+          intent: c.intent,
+          priority: getPriorityLevel(c.priority),
+          created_at: c.created_at,
+        })),
+        total: claims.length,
       });
     }
 
     default:
-      return createToolResult(`Unknown claim tool: ${name}`, true);
+      return createToolResult(`Unknown action: ${action}`, true);
   }
 }

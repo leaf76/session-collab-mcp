@@ -1,21 +1,15 @@
 # AGENTS.md - MCP Tools
 
-10 files implementing 50+ MCP tools. Each exports: tool definitions + handler function.
+4 files implementing 9 MCP tools. Simplified action-based design.
 
 ## Structure
 
 | File | Domain | Tools |
 |------|--------|-------|
-| session.ts | Session lifecycle | start, end, heartbeat, config |
-| claim.ts | File/symbol claims | claim, check, release, auto_release |
-| message.ts | Messaging | send, list |
-| decision.ts | Decisions | add, list |
-| lsp.ts | LSP integration | analyze_symbols, validate, impact |
-| queue.ts | Claim queue | join, leave, list |
-| notification.ts | Notifications | list, mark_read |
-| memory.ts | Working memory | save, recall, clear, pin, stats |
-| protection.ts | Protection | plan_*, file_* |
-| history.ts | Audit | list |
+| session.ts | Session lifecycle | start, end, list, config |
+| claim.ts | File claims | claim (action: create/check/release/list) |
+| memory.ts | Working memory | save, recall, clear |
+| protection.ts | Protection | protect (action: register/check/list) |
 
 ## Implementation Pattern
 
