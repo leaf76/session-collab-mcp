@@ -4,17 +4,10 @@ AI Context Persistence & Multi-Session Collaboration for Claude Code.
 
 ## What It Does
 
-**Single Session (Lite Mode)**: Persist important context across conversations
-- Save findings, decisions, and state with `collab_memory_save`
-- Restore context with `collab_memory_active`
-- Protect plan documents from accidental deletion
-
-**Multiple Sessions (Full Mode)**: Coordinate parallel work
-- Claim files/symbols before editing
-- Detect and prevent conflicts
-- Queue system for blocked resources
-
-The server **automatically detects** which mode to use based on active session count.
+- Persist important context across conversations (`collab_memory_save`, `collab_memory_recall`)
+- Coordinate parallel sessions by claiming files and detecting conflicts (`collab_claim`)
+- Protect critical files from accidental changes (`collab_protect`)
+- Provide a quick status snapshot for the current session (`collab_status`)
 
 ## Installation
 
@@ -47,13 +40,13 @@ Add to `~/.claude.json`:
 
 ```
 1. collab_session_start    # Register session
-2. collab_memory_active    # Restore saved context
+2. collab_memory_recall    # Restore saved context (active=true)
 3. ... work ...
 4. collab_memory_save      # Save important findings (pinned=true)
 5. collab_session_end      # Clean up
 ```
 
-## Lite Mode Tools (Single Session)
+## Core Tools (10)
 
 | Tool | Purpose |
 |------|---------|
@@ -61,21 +54,12 @@ Add to `~/.claude.json`:
 | `collab_session_end` | End session |
 | `collab_memory_save` | Save important context |
 | `collab_memory_recall` | Retrieve saved context |
-| `collab_memory_active` | Get pinned + high-priority memories |
-| `collab_plan_register` | Protect plan documents |
-| `collab_decision_add` | Log architectural decisions |
-
-## Full Mode Tools (Multi-Session)
-
-When multiple sessions are detected, additional tools become available:
-
-| Category | Tools |
-|----------|-------|
-| Claim | `collab_claim`, `collab_check`, `collab_release`, `collab_auto_release` |
-| Queue | `collab_queue_join`, `collab_queue_leave`, `collab_queue_list` |
-| Notify | `collab_notifications_list`, `collab_notifications_mark_read` |
-| LSP | `collab_analyze_symbols`, `collab_validate_symbols`, `collab_impact_analysis` |
-| Message | `collab_message_send`, `collab_message_list` |
+| `collab_memory_clear` | Clear memories |
+| `collab_claim` | Create/check/release/list claims |
+| `collab_protect` | Register/check/list protected files |
+| `collab_session_list` | List active sessions |
+| `collab_config` | Configure session behavior |
+| `collab_status` | Get session status summary |
 
 ## Memory Categories
 
@@ -84,7 +68,9 @@ When multiple sessions are detected, additional tools become available:
 | `finding` | Discovered facts, root causes |
 | `decision` | Architectural choices |
 | `state` | Current tracking info |
+| `todo` | Action items |
 | `important` | Critical context |
+| `context` | General background |
 
 ## Development
 

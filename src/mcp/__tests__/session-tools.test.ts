@@ -72,6 +72,22 @@ describe('Session Tools', () => {
       const response = JSON.parse(result.content[0].text);
       expect(response.sessions.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('should filter sessions by project_root', async () => {
+      const otherSession = await createSession(db, {
+        project_root: '/other/project',
+        name: 'other-session',
+      });
+
+      const result = await handleSessionTool(db, 'collab_session_list', {
+        project_root: '/test/project',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.sessions).toHaveLength(2);
+      expect(response.sessions.some((s: { id: string }) => s.id === otherSession.id)).toBe(false);
+    });
   });
 
   describe('collab_config', () => {

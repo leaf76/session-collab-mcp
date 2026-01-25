@@ -8,6 +8,13 @@ import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
 import { createClaim, getClaim, listClaims, checkConflicts, releaseClaim, getSession, logAuditEvent, saveMemory, clearMemory } from '../../db/queries.js';
 import { getPriorityLevel } from '../../db/types.js';
 import {
+  validateInput,
+  claimCreateSchema,
+  claimCheckSchema,
+  claimReleaseSchema,
+  claimListSchema,
+} from '../schemas.js';
+import {
   errorResponse,
   successResponse,
   validationError,
@@ -40,9 +47,38 @@ export const claimTools: McpTool[] = [
           items: { type: 'string' },
           description: 'File paths (for create/check actions)',
         },
+        exclude_self: {
+          type: 'boolean',
+          description: 'Exclude your own claims when checking (for check action)',
+        },
+        symbols: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              file: { type: 'string' },
+              symbols: { type: 'array', items: { type: 'string' } },
+              symbol_type: {
+                type: 'string',
+                enum: ['function', 'class', 'method', 'variable', 'block', 'other'],
+              },
+            },
+            required: ['file', 'symbols'],
+          },
+          description: 'Symbol claims (for create/check actions)',
+        },
         intent: {
           type: 'string',
           description: 'What you plan to do (for create action)',
+        },
+        scope: {
+          type: 'string',
+          enum: ['small', 'medium', 'large'],
+          description: 'Scope estimate (for create action)',
+        },
+        priority: {
+          type: 'number',
+          description: 'Priority 0-100 (for create action)',
         },
         claim_id: {
           type: 'string',
@@ -56,6 +92,14 @@ export const claimTools: McpTool[] = [
         force: {
           type: 'boolean',
           description: 'Force release even if not owner (for release action)',
+        },
+        summary: {
+          type: 'string',
+          description: 'Release summary (for release action)',
+        },
+        project_root: {
+          type: 'string',
+          description: 'Filter by project root (for list action)',
         },
       },
       required: ['action', 'session_id'],
@@ -81,58 +125,60 @@ export async function handleClaimTool(
 
   switch (action) {
     case 'create': {
-      const files = args.files as string[] | undefined;
-      const intent = args.intent as string | undefined;
-
-      if (!intent) {
-        return validationError('intent is required for create action');
+      const validation = validateInput(claimCreateSchema, args);
+      if (!validation.success) {
+        return validationError(validation.error);
       }
-      if (!files || files.length === 0) {
-        return validationError('files array is required for create action');
-      }
+      const input = validation.data;
 
       // Verify session exists and is active
-      const sessionResult = await validateActiveSession(db, sessionId);
+      const sessionResult = await validateActiveSession(db, input.session_id);
       if (!sessionResult.valid) {
         return sessionResult.error;
       }
 
+      const symbolFiles = (input.symbols ?? []).map((symbol) => symbol.file);
+      const files = Array.from(new Set([...(input.files ?? []), ...symbolFiles]));
+
       // Create the claim
       const { claim } = await createClaim(db, {
-        session_id: sessionId,
+        session_id: input.session_id,
         files,
-        intent,
-        scope: 'medium',
-        priority: 50,
+        symbols: input.symbols,
+        intent: input.intent,
+        scope: input.scope,
+        priority: input.priority,
       });
 
       // Log audit event
       await logAuditEvent(db, {
-        session_id: sessionId,
+        session_id: input.session_id,
         action: 'claim_created',
         entity_type: 'claim',
         entity_id: claim.id,
-        metadata: { files, intent },
+        metadata: { files, intent: input.intent },
       });
 
       // Auto-save to memory
-      await saveMemory(db, sessionId, {
+      await saveMemory(db, input.session_id, {
         category: 'state',
         key: `claim_${claim.id}`,
-        content: `Working on: ${intent}\nFiles: ${files.join(', ')}`,
+        content: `Working on: ${input.intent}\nFiles: ${files.join(', ')}`,
         priority: 60,
         related_claim_id: claim.id,
         metadata: { claim_id: claim.id, files },
       });
 
       // Check for conflicts
-      const conflicts = await checkConflicts(db, files, sessionId);
+      const conflicts = await checkConflicts(db, files, input.session_id, input.symbols);
 
       if (conflicts.length > 0) {
         return successResponse({
+          success: true,
           claim_id: claim.id,
           status: 'created_with_conflicts',
           files,
+          symbols: input.symbols ?? [],
           conflicts: conflicts.map(c => ({
             session_name: c.session_name,
             file: c.file_path,
@@ -143,37 +189,48 @@ export async function handleClaimTool(
       }
 
       return successResponse({
+        success: true,
         claim_id: claim.id,
         status: 'created',
         files,
-        intent,
+        symbols: input.symbols ?? [],
+        intent: input.intent,
         message: 'Claim created successfully.',
       });
     }
 
     case 'check': {
-      const files = args.files as string[] | undefined;
+      const validation = validateInput(claimCheckSchema, args);
+      if (!validation.success) {
+        return validationError(validation.error);
+      }
+      const input = validation.data;
 
-      if (!files || files.length === 0) {
-        return validationError('files array is required for check action');
+      if (!input.session_id) {
+        return validationError('session_id is required');
       }
 
-      const conflicts = await checkConflicts(db, files, sessionId);
+      const excludeSelf = input.exclude_self ?? true;
+      const excludeSessionId = excludeSelf ? input.session_id : undefined;
+      const conflicts = await checkConflicts(db, input.files, excludeSessionId, input.symbols);
 
       if (conflicts.length === 0) {
         return successResponse({
+          safe: true,
           has_conflicts: false,
           can_edit: true,
           recommendation: 'proceed',
-          safe_files: files,
+          safe_files: input.files,
+          conflicts: [],
           message: 'All files are safe to edit. Proceed.',
         });
       }
 
       const blockedFiles = new Set(conflicts.map(c => c.file_path));
-      const safeFiles = files.filter(f => !blockedFiles.has(f));
+      const safeFiles = input.files.filter(f => !blockedFiles.has(f));
 
       return successResponse({
+        safe: false,
         has_conflicts: true,
         can_edit: safeFiles.length > 0,
         recommendation: safeFiles.length > 0 ? 'proceed_safe_only' : 'abort',
@@ -191,22 +248,22 @@ export async function handleClaimTool(
     }
 
     case 'release': {
-      const claimId = args.claim_id as string | undefined;
-      const status = (args.status as string) || 'completed';
-      const force = args.force as boolean | undefined;
-
-      if (!claimId) {
-        return validationError('claim_id is required for release action');
+      const validation = validateInput(claimReleaseSchema, args);
+      if (!validation.success) {
+        return validationError(validation.error);
       }
+      const input = validation.data;
+      const status = input.status ?? 'completed';
+      const force = input.force;
 
-      const claim = await getClaim(db, claimId);
+      const claim = await getClaim(db, input.claim_id);
       if (!claim) {
         return errorResponse(ERROR_CODES.CLAIM_NOT_FOUND, 'Claim not found');
       }
 
       // Check ownership
-      if (claim.session_id !== sessionId && !force) {
-        const callerSession = await getSession(db, sessionId);
+      if (claim.session_id !== input.session_id && !force) {
+        const callerSession = await getSession(db, input.session_id);
         let config: SessionConfig = DEFAULT_SESSION_CONFIG;
         if (callerSession?.config) {
           try {
@@ -228,28 +285,45 @@ export async function handleClaimTool(
         return errorResponse(ERROR_CODES.CLAIM_ALREADY_RELEASED, `Claim already ${claim.status}`);
       }
 
-      await releaseClaim(db, claimId, { status: status as 'completed' | 'abandoned' });
+      await releaseClaim(db, input.claim_id, {
+        status: status as 'completed' | 'abandoned',
+        summary: input.summary,
+      });
 
       await logAuditEvent(db, {
-        session_id: sessionId,
+        session_id: input.session_id,
         action: 'claim_released',
         entity_type: 'claim',
-        entity_id: claimId,
+        entity_id: input.claim_id,
         metadata: { status: status as 'completed' | 'abandoned', files: claim.files },
       });
 
-      await clearMemory(db, claim.session_id, { key: `claim_${claimId}` });
+      await clearMemory(db, claim.session_id, { key: `claim_${input.claim_id}` });
 
       return successResponse({
         success: true,
-        claim_id: claimId,
+        claim_id: input.claim_id,
         files: claim.files,
-        message: `Claim ${status}. Files now available.`,
+        message: `Claim ${status} released. Files now available.`,
       });
     }
 
     case 'list': {
-      const claims = await listClaims(db, { session_id: sessionId, status: 'active' });
+      const validation = validateInput(claimListSchema, args);
+      if (!validation.success) {
+        return validationError(validation.error);
+      }
+      const input = validation.data;
+
+      if (!input.session_id) {
+        return validationError('session_id is required');
+      }
+
+      const claims = await listClaims(db, {
+        session_id: input.session_id,
+        status: input.status ?? 'active',
+        project_root: input.project_root,
+      });
 
       return successResponse({
         claims: claims.map(c => ({

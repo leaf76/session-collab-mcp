@@ -30,7 +30,7 @@ const CAPABILITIES: McpCapabilities = {
   tools: {},
 };
 
-// 9 core tools: session (4) + claim (1) + memory (3) + protect (1)
+// 10 core tools: session (5) + claim (1) + memory (3) + protect (1)
 
 // All tools combined (now only 10 core tools)
 const ALL_TOOLS: McpTool[] = [...sessionTools, ...claimTools, ...memoryTools, ...protectionTools];

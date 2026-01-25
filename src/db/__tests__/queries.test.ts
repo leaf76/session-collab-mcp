@@ -11,6 +11,9 @@ import {
   listClaims,
   checkConflicts,
   releaseClaim,
+  releaseClaimByFile,
+} from '../queries.js';
+import {
   sendMessage,
   listMessages,
   addDecision,
@@ -18,7 +21,7 @@ import {
   storeReferences,
   getReferencesForSymbol,
   analyzeClaimImpact,
-} from '../queries.js';
+} from '../legacy-queries.js';
 
 describe('Session Queries', () => {
   let db: TestDatabase;
@@ -308,6 +311,39 @@ describe('Claim Queries', () => {
       expect(fetched!.status).toBe('abandoned');
     });
   });
+
+  describe('releaseClaimByFile', () => {
+    it('should release single-file claim entirely', async () => {
+      const { claim } = await createClaim(db, {
+        session_id: sessionId,
+        files: ['single.ts'],
+        intent: 'Single file',
+      });
+
+      const result = await releaseClaimByFile(db, sessionId, 'single.ts');
+      expect(result?.released).toBe(true);
+
+      const fetched = await getClaim(db, claim.id);
+      expect(fetched!.status).toBe('completed');
+    });
+
+    it('should remove one file from multi-file claim', async () => {
+      const { claim } = await createClaim(db, {
+        session_id: sessionId,
+        files: ['a.ts', 'b.ts'],
+        intent: 'Multi file',
+      });
+
+      const result = await releaseClaimByFile(db, sessionId, 'a.ts');
+      expect(result?.partial).toBe(true);
+      expect(result?.files_remaining).toBe(1);
+
+      const fetched = await getClaim(db, claim.id);
+      expect(fetched!.status).toBe('active');
+      expect(fetched!.files).toContain('b.ts');
+      expect(fetched!.files).not.toContain('a.ts');
+    });
+  });
 });
 
 describe('Conflict Detection', () => {
@@ -423,6 +459,27 @@ describe('Conflict Detection', () => {
         ['src/auth.ts'],
         session2Id,
         [{ file: 'src/auth.ts', symbols: ['refreshToken'] }]
+      );
+
+      expect(conflicts).toHaveLength(0);
+    });
+
+    it('should not mismatch symbols across different files', async () => {
+      await createClaim(db, {
+        session_id: session1Id,
+        files: ['src/file-b.ts'],
+        intent: 'Working on file B',
+        symbols: [{ file: 'src/file-b.ts', symbols: ['foo'] }],
+      });
+
+      const conflicts = await checkConflicts(
+        db,
+        ['src/file-a.ts', 'src/file-b.ts'],
+        session2Id,
+        [
+          { file: 'src/file-a.ts', symbols: ['foo'] },
+          { file: 'src/file-b.ts', symbols: ['bar'] },
+        ]
       );
 
       expect(conflicts).toHaveLength(0);

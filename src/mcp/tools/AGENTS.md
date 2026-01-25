@@ -1,12 +1,12 @@
 # AGENTS.md - MCP Tools
 
-4 files implementing 9 MCP tools. Simplified action-based design.
+4 files implementing 10 MCP tools. Simplified action-based design.
 
 ## Structure
 
 | File | Domain | Tools |
 |------|--------|-------|
-| session.ts | Session lifecycle | start, end, list, config |
+| session.ts | Session lifecycle | start, end, list, config, status |
 | claim.ts | File claims | claim (action: create/check/release/list) |
 | memory.ts | Working memory | save, recall, clear |
 | protection.ts | Protection | protect (action: register/check/list) |

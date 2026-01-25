@@ -2,7 +2,7 @@
 
 ## Breaking Changes
 
-This version simplifies the MCP server from 50+ tools to 9 core tools. While this greatly improves maintainability, it introduces breaking changes.
+This version simplifies the MCP server from 50+ tools to 10 core tools. While this greatly improves maintainability, it introduces breaking changes.
 
 ## Tool Mapping
 

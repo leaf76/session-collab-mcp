@@ -1,6 +1,6 @@
 {
   "name": "session-collab-mcp",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "MCP server for Claude Code session collaboration - prevents conflicts, persists context, and protects important files",
   "license": "MIT",
   "keywords": [
@@ -13,7 +13,9 @@
   ],
   "type": "module",
   "bin": {
-    "session-collab-mcp": "dist/cli.js"
+    "session-collab-mcp": "dist/cli.js",
+    "session-collab-http": "dist/http/cli.js",
+    "session-collab": "dist/http/client-cli.js"
   },
   "files": [
     "bin",
@@ -22,6 +24,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "build:legacy": "SESSION_COLLAB_INCLUDE_LEGACY=true tsup",
     "start": "node dist/cli.js",
     "start:dev": "tsx src/cli.ts",
     "prepublishOnly": "npm run build",

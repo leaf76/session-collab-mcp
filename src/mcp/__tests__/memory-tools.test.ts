@@ -33,8 +33,8 @@ describe('Memory Tools', () => {
 
       expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
-      expect(response.success).toBe(true);
-      expect(response.memory_id).toBeDefined();
+      expect(response.saved).toBe(true);
+      expect(response.id).toBeDefined();
     });
 
     it('should update existing memory (upsert)', async () => {
@@ -56,9 +56,13 @@ describe('Memory Tools', () => {
       });
 
       expect(result.isError).toBeFalsy();
-      const response = JSON.parse(result.content[0].text);
-      expect(response.success).toBe(true);
-      expect(response.updated).toBe(true);
+      const recall = await handleMemoryTool(db, 'collab_memory_recall', {
+        session_id: sessionId,
+        key: 'test_key',
+      });
+      const response = JSON.parse(recall.content[0].text);
+      expect(response.memories).toHaveLength(1);
+      expect(response.memories[0].content).toBe('Updated content');
     });
 
     it('should validate required fields', async () => {
@@ -69,7 +73,7 @@ describe('Memory Tools', () => {
 
       expect(result.isError).toBe(true);
       const response = JSON.parse(result.content[0].text);
-      expect(response.error).toBe('VALIDATION_ERROR');
+      expect(response.error).toBe('INVALID_INPUT');
     });
   });
 
@@ -107,13 +111,33 @@ describe('Memory Tools', () => {
       const result = await handleMemoryTool(db, 'collab_memory_recall', {
         session_id: sessionId,
         active: true,
-        priority_threshold: 60,
       });
 
       expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
-      expect(response.memories.length).toBeGreaterThan(0);
-      expect(response.total).toBeDefined();
+      expect(response.count).toBeGreaterThan(0);
+      expect(response.by_category).toBeDefined();
+    });
+
+    it('should exclude low-priority unpinned memories from active recall', async () => {
+      await saveMemory(db, sessionId, {
+        category: 'context',
+        key: 'low_priority',
+        content: 'Low priority context',
+        priority: 10,
+        pinned: false,
+      });
+
+      const result = await handleMemoryTool(db, 'collab_memory_recall', {
+        session_id: sessionId,
+        active: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      const byCategory = response.by_category ?? {};
+      const contextItems = byCategory.context ?? [];
+      expect(contextItems.find((m: { key: string }) => m.key === 'low_priority')).toBeUndefined();
     });
 
     it('should recall memory by key', async () => {
@@ -155,19 +179,17 @@ describe('Memory Tools', () => {
 
       expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
-      expect(response.success).toBe(true);
-      expect(response.cleared_count).toBe(1);
+      expect(response.cleared).toBe(1);
     });
 
-    it('should clear memories below priority threshold', async () => {
+    it('should require filter or clear_all', async () => {
       const result = await handleMemoryTool(db, 'collab_memory_clear', {
         session_id: sessionId,
-        priority_threshold: 35,
       });
 
-      expect(result.isError).toBeFalsy();
+      expect(result.isError).toBe(true);
       const response = JSON.parse(result.content[0].text);
-      expect(response.cleared_count).toBe(1);
+      expect(response.error).toBe('INVALID_INPUT');
     });
 
     it('should clear specific memory by key', async () => {
@@ -178,19 +200,18 @@ describe('Memory Tools', () => {
 
       expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
-      expect(response.success).toBe(true);
-      expect(response.cleared_count).toBe(1);
+      expect(response.cleared).toBe(1);
     });
 
-    it('should clear all memories when no filters provided', async () => {
+    it('should clear all memories when clear_all is true', async () => {
       const result = await handleMemoryTool(db, 'collab_memory_clear', {
         session_id: sessionId,
+        clear_all: true,
       });
 
       expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
-      expect(response.success).toBe(true);
-      expect(response.cleared_count).toBe(2);
+      expect(response.cleared).toBe(2);
     });
   });
 });

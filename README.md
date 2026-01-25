@@ -66,6 +66,18 @@ Add to your `~/.claude.json`:
 npm install -g session-collab-mcp
 ```
 
+### Option 4: HTTP Server + CLI (Universal)
+
+```bash
+# Start HTTP server
+session-collab-http --host 127.0.0.1 --port 8765
+
+# CLI wrapper (HTTP client)
+session-collab health
+session-collab tools
+session-collab call --name collab_session_start --args '{"project_root":"/repo","name":"demo"}'
+```
+
 ## Features
 
 ### Automatic Session Management
@@ -117,7 +129,7 @@ Configure behavior with `collab_config`:
 
 ## MCP Tools Reference
 
-### Session Management (4 tools)
+### Session Management (5 tools)
 
 | Tool | Purpose |
 |------|---------|
@@ -125,12 +137,13 @@ Configure behavior with `collab_config`:
 | `collab_session_end` | End session and release all claims |
 | `collab_session_list` | List active sessions |
 | `collab_config` | Configure session behavior |
+| `collab_status` | Get session status summary |
 
 ### Claims (1 unified tool)
 
 | Tool | Actions |
 |------|---------|
-| `collab_claim` | `create`, `check`, `release`, `list` |
+| `collab_claim` | `create`, `check`, `release`, `list` (check: `exclude_self` defaults to true) |
 
 ### Working Memory (3 tools)
 
@@ -152,6 +165,27 @@ Configure behavior with `collab_config`:
 |------|---------|
 | `collab_status` | Unified session status |
 
+### HTTP API (v1)
+
+Core endpoints map 1:1 to MCP tools:
+
+- `POST /v1/sessions/start` → `collab_session_start`
+- `POST /v1/sessions/end` → `collab_session_end`
+- `GET /v1/sessions` → `collab_session_list`
+- `POST /v1/config` → `collab_config`
+- `GET /v1/status` → `collab_status`
+- `POST /v1/claims` → `collab_claim` (create)
+- `POST /v1/claims/check` → `collab_claim` (check)
+- `POST /v1/claims/release` → `collab_claim` (release)
+- `GET /v1/claims` → `collab_claim` (list)
+- `POST /v1/memory/save` → `collab_memory_save`
+- `POST /v1/memory/recall` → `collab_memory_recall`
+- `POST /v1/memory/clear` → `collab_memory_clear`
+- `POST /v1/protect/register` → `collab_protect` (register)
+- `POST /v1/protect/check` → `collab_protect` (check)
+- `GET /v1/protect/list` → `collab_protect` (list)
+- `POST /v1/tools/call` / `GET /v1/tools` (generic access)
+
 ## Usage Examples
 
 ### Basic Workflow
@@ -164,6 +198,9 @@ collab_claim(action="create", files=["src/auth.ts"], intent="Adding JWT support"
 # Session B checks before editing
 collab_claim(action="check", files=["src/auth.ts"])
 # Result: "CONFLICT: src/auth.ts is claimed by 'feature-auth'"
+
+# If you want to include your own claims in the check
+collab_claim(action="check", files=["src/auth.ts"], exclude_self=false)
 
 # Session A finishes
 collab_claim(action="release", claim_id="...")
@@ -222,7 +259,7 @@ Version 2.0 introduces breaking changes with a simplified API. See [MIGRATION.md
 
 ### Key Changes
 
-- **Tool Consolidation**: 50+ tools → 9 core tools
+- **Tool Consolidation**: 50+ tools → 10 core tools
 - **Action-Based Interface**: Single tools with multiple actions
 - **Simplified Responses**: Cleaner, flatter response formats
 - **Removed Features**: LSP integration, messaging, notifications, queuing
@@ -250,6 +287,16 @@ npm install
 npm run build
 ```
 
+### Legacy Build (Optional)
+
+Legacy schemas/queries are kept out of the default bundle. To include a legacy entry for compatibility:
+
+```bash
+SESSION_COLLAB_INCLUDE_LEGACY=true npm run build
+```
+
+Maintenance note: legacy exports are for backward compatibility only and are not exposed in the v2 tool list.
+
 ### Scripts
 
 ```bash
@@ -259,6 +306,14 @@ npm run start:dev    # Start in development mode
 npm run typecheck    # Run TypeScript type checking
 npm run lint         # Run ESLint
 npm run test         # Run tests with Vitest
+```
+
+### HTTP Integration Tests
+
+HTTP integration tests require a local listen port. Enable them with:
+
+```bash
+SESSION_COLLAB_HTTP_TESTS=true npx vitest run src/http/__tests__/server-integration.test.ts
 ```
 
 ### Project Structure
@@ -287,7 +342,7 @@ session-collab-mcp/
 
 ### v2.0.0 (Breaking)
 
-- **Major Simplification**: Reduced from 50+ tools to 9 core tools
+- **Major Simplification**: Reduced from 50+ tools to 10 core tools
 - **Action-Based Design**: Unified tools with action parameters
 - **Removed Features**: LSP integration, messaging, notifications, queuing, decision tracking
 - **Improved Performance**: Faster startup and reduced complexity

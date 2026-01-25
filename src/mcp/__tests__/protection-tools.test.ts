@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDatabase, TestDatabase } from '../../db/__tests__/test-helper.js';
 import { handleProtectionTool } from '../tools/protection.js';
-import { createSession, registerCreatedFile } from '../../db/queries.js';
+import { createSession, registerCreatedFile, registerPlan } from '../../db/queries.js';
 
 describe('Protection Tools', () => {
   let db: TestDatabase;
@@ -28,14 +28,14 @@ describe('Protection Tools', () => {
           action: 'register',
           session_id: sessionId,
           file_path: 'src/critical.ts',
-          reason: 'Core authentication logic',
-          priority: 90,
+          description: 'Core authentication logic',
         });
 
         expect(result.isError).toBeFalsy();
         const response = JSON.parse(result.content[0].text);
-        expect(response.success).toBe(true);
-        expect(response.protection_id).toBeDefined();
+        expect(response.registered).toBe(true);
+        expect(response.type).toBe('file');
+        expect(response.file_path).toBe('src/critical.ts');
       });
 
       it('should validate required fields', async () => {
@@ -47,27 +47,39 @@ describe('Protection Tools', () => {
 
         expect(result.isError).toBe(true);
         const response = JSON.parse(result.content[0].text);
-        expect(response.error).toBe('VALIDATION_ERROR');
+        expect(response.error).toBe('INVALID_INPUT');
       });
 
-      it('should not allow duplicate protection for same file', async () => {
-        // Register first protection
-        await registerCreatedFile(db, sessionId, {
-          file_path: 'src/duplicate.ts',
-        });
+      it('should allow re-registering same file (upsert)', async () => {
+        await registerCreatedFile(db, sessionId, { file_path: 'src/duplicate.ts' });
 
-        // Try to register again
         const result = await handleProtectionTool(db, 'collab_protect', {
           action: 'register',
           session_id: sessionId,
           file_path: 'src/duplicate.ts',
-          reason: 'Duplicate protection',
-          priority: 70,
+          description: 'Duplicate protection',
         });
 
-        expect(result.isError).toBe(true);
+        expect(result.isError).toBeFalsy();
         const response = JSON.parse(result.content[0].text);
-        expect(response.error).toBe('PROTECTION_EXISTS');
+        expect(response.registered).toBe(true);
+      });
+
+      it('should register plan protection', async () => {
+        const result = await handleProtectionTool(db, 'collab_protect', {
+          action: 'register',
+          session_id: sessionId,
+          file_path: 'docs/plan.md',
+          type: 'plan',
+          title: 'Refactor Plan',
+          content_summary: 'Steps for refactoring core modules',
+        });
+
+        expect(result.isError).toBeFalsy();
+        const response = JSON.parse(result.content[0].text);
+        expect(response.registered).toBe(true);
+        expect(response.type).toBe('plan');
+        expect(response.file_path).toBe('docs/plan.md');
       });
     });
 
@@ -83,40 +95,25 @@ describe('Protection Tools', () => {
         const result = await handleProtectionTool(db, 'collab_protect', {
           action: 'check',
           session_id: sessionId,
-          file_paths: ['src/protected.ts', 'src/unprotected.ts'],
+          file_path: 'src/protected.ts',
         });
 
         expect(result.isError).toBeFalsy();
         const response = JSON.parse(result.content[0].text);
-        expect(response.protections).toHaveLength(1);
-        expect(response.protections[0].file_path).toBe('src/protected.ts');
-        expect(response.safe).toBe(false);
+        expect(response.protected).toBe(true);
+        expect(response.reason).toBeDefined();
       });
 
-      it('should return safe when no protections found', async () => {
+      it('should return not protected when no protections found', async () => {
         const result = await handleProtectionTool(db, 'collab_protect', {
           action: 'check',
           session_id: sessionId,
-          file_paths: ['src/unprotected.ts', 'src/also-safe.ts'],
+          file_path: 'src/unprotected.ts',
         });
 
         expect(result.isError).toBeFalsy();
         const response = JSON.parse(result.content[0].text);
-        expect(response.protections).toEqual([]);
-        expect(response.safe).toBe(true);
-      });
-
-      it('should check single file protection', async () => {
-        const result = await handleProtectionTool(db, 'collab_protect', {
-          action: 'check',
-          session_id: sessionId,
-          file_paths: ['src/protected.ts'],
-        });
-
-        expect(result.isError).toBeFalsy();
-        const response = JSON.parse(result.content[0].text);
-        expect(response.protections).toHaveLength(1);
-        expect(response.blocked).toBe(true);
+        expect(response.protected).toBe(false);
       });
     });
 
@@ -127,12 +124,15 @@ describe('Protection Tools', () => {
           file_path: 'src/high.ts',
         });
 
-        await registerCreatedFile(db, sessionId, {
-          file_path: 'src/low.ts',
+        await registerPlan(db, sessionId, {
+          file_path: 'docs/plan.md',
+          title: 'Refactor Plan',
+          content_summary: 'Steps for refactoring',
+          status: 'in_progress',
         });
       });
 
-      it('should list all protections', async () => {
+      it('should list files and plans', async () => {
         const result = await handleProtectionTool(db, 'collab_protect', {
           action: 'list',
           session_id: sessionId,
@@ -140,21 +140,10 @@ describe('Protection Tools', () => {
 
         expect(result.isError).toBeFalsy();
         const response = JSON.parse(result.content[0].text);
-        expect(response.protections).toHaveLength(2);
-        expect(response.total).toBe(2);
-      });
-
-      it('should filter by priority threshold', async () => {
-        const result = await handleProtectionTool(db, 'collab_protect', {
-          action: 'list',
-          session_id: sessionId,
-          priority_threshold: 50,
-        });
-
-        expect(result.isError).toBeFalsy();
-        const response = JSON.parse(result.content[0].text);
-        expect(response.protections).toHaveLength(1);
-        expect(response.protections[0].file_path).toBe('src/high.ts');
+        expect(response.files.length).toBe(2);
+        expect(response.plan_list.length).toBe(1);
+        expect(response.protected_files).toBe(2);
+        expect(response.plans).toBe(1);
       });
 
       it('should return empty list when no protections exist', async () => {
@@ -171,8 +160,10 @@ describe('Protection Tools', () => {
 
         expect(result.isError).toBeFalsy();
         const response = JSON.parse(result.content[0].text);
-        expect(response.protections).toEqual([]);
-        expect(response.total).toBe(0);
+        expect(response.files).toEqual([]);
+        expect(response.plan_list).toEqual([]);
+        expect(response.protected_files).toBe(0);
+        expect(response.plans).toBe(0);
       });
     });
   });

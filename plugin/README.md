@@ -4,9 +4,9 @@ Claude Code plugin for AI context persistence and multi-session collaboration.
 
 ## Features
 
-- **Lite Mode**: Context persistence for single sessions (13 tools)
-- **Full Mode**: Collaboration tools for multi-session work (50+ tools)
-- **Auto-Detection**: Mode switches automatically based on active sessions
+- Context persistence across conversations
+- Conflict avoidance with file/symbol claims
+- Protected files and session status summary
 
 ## Installation
 
@@ -22,13 +22,13 @@ Claude Code plugin for AI context persistence and multi-session collaboration.
 
 ```
 1. collab_session_start    # Register session
-2. collab_memory_active    # Restore saved context
+2. collab_memory_recall    # Restore saved context (active=true)
 3. ... work ...
 4. collab_memory_save      # Save important findings
 5. collab_session_end      # Clean up
 ```
 
-## Core Tools (Lite Mode)
+## Core Tools (10)
 
 | Tool | Purpose |
 |------|---------|
@@ -36,15 +36,12 @@ Claude Code plugin for AI context persistence and multi-session collaboration.
 | `collab_session_end` | End session |
 | `collab_memory_save` | Save important context |
 | `collab_memory_recall` | Retrieve saved context |
-| `collab_memory_active` | Get pinned + high-priority memories |
-| `collab_plan_register` | Protect plan documents |
-
-## Multi-Session Tools (Full Mode)
-
-When multiple sessions are detected:
-- `collab_claim` / `collab_check` / `collab_release`
-- `collab_queue_*` / `collab_notifications_*`
-- `collab_message_*`
+| `collab_memory_clear` | Clear memories |
+| `collab_claim` | Create/check/release/list claims |
+| `collab_protect` | Register/check/list protected files |
+| `collab_session_list` | List active sessions |
+| `collab_config` | Configure session behavior |
+| `collab_status` | Get session status summary |
 
 ## Commands
 

@@ -24,13 +24,14 @@ export const SERVER_INSTRUCTIONS = `
 
 Coordinate sessions and persist context across conversations.
 
-## 9 Core Tools
+## 10 Core Tools
 
-### Session (4 tools)
+### Session (5 tools)
 - \`collab_session_start\`: Start session with project_root
 - \`collab_session_end\`: End session, release claims
 - \`collab_session_list\`: List active sessions
 - \`collab_config\`: Configure session behavior
+- \`collab_status\`: Get session status and summary
 
 ### Claims (1 tool)
 - \`collab_claim\`: Unified claim tool

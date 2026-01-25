@@ -1,4 +1,4 @@
-// Session management tools - Simplified to 4 core tools
+// Session management tools - Simplified to 5 core tools
 
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol.js';
@@ -26,6 +26,7 @@ import {
   sessionEndSchema,
   sessionListSchema,
   configSchema,
+  statusSchema,
 } from '../schemas.js';
 import {
   errorResponse,
@@ -109,6 +110,20 @@ export const sessionTools: McpTool[] = [
         allow_release_others: {
           type: 'boolean',
           description: 'Allow releasing other sessions claims',
+        },
+      },
+      required: ['session_id'],
+    },
+  },
+  {
+    name: 'collab_status',
+    description: 'Get current session status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Session ID to check',
         },
       },
       required: ['session_id'],
@@ -307,12 +322,11 @@ export async function handleSessionTool(
     }
 
     case 'collab_status': {
-      // New unified status tool
-      const sessionId = args.session_id as string;
-
-      if (!sessionId) {
-        return validationError('session_id is required');
+      const validation = validateInput(statusSchema, args);
+      if (!validation.success) {
+        return validationError(validation.error);
       }
+      const { session_id: sessionId } = validation.data;
 
       const session = await getSession(db, sessionId);
       if (!session) {
