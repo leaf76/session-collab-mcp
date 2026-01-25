@@ -340,6 +340,14 @@ session-collab-mcp/
 
 ## Changelog
 
+### v2.1.0
+
+- Add HTTP server + CLI wrapper for universal AI CLI usage
+- Add HTTP API endpoints and utils tests
+- Add legacy entry for deprecated schemas/queries (optional build)
+- Improve claim conflict accuracy and release summaries
+- Expand test coverage across MCP tools and DB flows
+
 ### v2.0.0 (Breaking)
 
 - **Major Simplification**: Reduced from 50+ tools to 10 core tools
