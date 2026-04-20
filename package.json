@@ -1,6 +1,6 @@
 {
   "name": "session-collab-mcp",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Provider-agnostic MCP collaboration server for agent sessions - prevents conflicts, persists context, and protects important files",
   "license": "MIT",
   "keywords": [
