@@ -19,14 +19,17 @@ describe('HTTP Server Utils', () => {
   it('should normalize tool results', () => {
     const ok = normalizeToolResult({
       content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
-    });
+    }, 'trace-ok');
     expect(ok.ok).toBe(true);
 
     const err = normalizeToolResult({
       content: [{ type: 'text', text: JSON.stringify({ error: 'INVALID_INPUT', message: 'bad' }) }],
       isError: true,
-    });
+    }, 'trace-err');
     expect(err.ok).toBe(false);
-    expect(err.error?.code).toBe('INVALID_INPUT');
+    if (!err.ok) {
+      expect(err.code).toBe('INVALID_INPUT');
+      expect(err.trace_id).toBe('trace-err');
+    }
   });
 });

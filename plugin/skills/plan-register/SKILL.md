@@ -1,6 +1,6 @@
 ---
 name: plan-register
-description: Register a plan document for protection. Use this after creating a plan file to ensure it won't be accidentally deleted.
+description: Register a plan document for protection using the current v2 protection API.
 allowed-tools: mcp__session-collab__*, Read
 ---
 
@@ -22,7 +22,7 @@ Get the plan file path. If not provided, ask the user.
 
 ### Step 2: Read the Plan Content
 
-Use `Read` tool to get the plan content for summary extraction.
+Use `Read` to get the plan content for summary extraction.
 
 ### Step 3: Extract Key Information
 
@@ -33,12 +33,13 @@ From the plan content, identify:
 
 ### Step 4: Register the Plan
 
-Call `collab_plan_register` with:
+Call `collab_protect` with:
+- `action`: `"register"`
 - `session_id`: Your session ID
 - `file_path`: Path to the plan file
+- `type`: `"plan"`
 - `title`: Extracted title
 - `content_summary`: Concise summary (key steps, goals)
-- `status`: "draft" or "approved" (based on context)
 
 ### Step 5: Confirm Registration
 
@@ -46,30 +47,25 @@ Display the registration result.
 
 ## Output Format
 
-```
-### Plan Registered 🛡️
+```text
+### Plan Registered
 
 | Item | Value |
 |------|-------|
-| Title | `[plan title]` |
-| File | `[file path]` |
-| Status | [draft/approved] |
+| Title | [plan title] |
+| File | [file path] |
 | Priority | 95 (high) |
-| Pinned | ✅ Yes |
+| Pinned | Yes |
 
 ### Summary Saved
 [Brief summary that will be preserved]
 
 ### Protection Active
-This plan is now protected from:
-- Accidental deletion
-- Context compaction loss
-- Overwriting without warning
+This plan is now protected from accidental deletion and context-loss mistakes.
 ```
 
 ## Notes
 
-- Plans are registered with **priority 95** (very high)
-- Plans are **pinned** to ensure they appear in active memory
-- Status can be updated later with `/plan-complete`
-- Use `collab_plan_list` to see all registered plans
+- Plans are registered with very high priority protection
+- Plans are pinned so they appear in active memory and protected file listings
+- Use `collab_protect` with `action="list"` to inspect protected plans and files

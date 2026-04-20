@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Context MCP ready. Use collab_session_start then collab_memory_active to restore context.\"}'"
+            "command": "echo '{\"systemMessage\": \"Context MCP ready. Use collab_session_start, then collab_memory_recall with active=true to restore context.\"}'"
           }
         ]
       }

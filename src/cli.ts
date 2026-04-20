@@ -4,25 +4,19 @@
 
 import { createInterface } from 'readline';
 import { createLocalDatabase, getDefaultDbPath } from './db/sqlite-adapter.js';
+import { loadMigrationsFromDir } from './db/migrations.js';
 import { handleMcpRequest, getMcpTools } from './mcp/server.js';
 import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from './constants.js';
-import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load migrations
+// Load migrations in filename order. Historical duplicate numeric prefixes are
+// preserved, so the full filename defines the execution order.
 function loadMigrations(): string[] {
   const migrationsDir = join(__dirname, '..', 'migrations');
-  return [
-    readFileSync(join(migrationsDir, '0001_init.sql'), 'utf-8'),
-    readFileSync(join(migrationsDir, '0002_auth.sql'), 'utf-8'),
-    readFileSync(join(migrationsDir, '0003_config.sql'), 'utf-8'),
-    readFileSync(join(migrationsDir, '0004_symbols.sql'), 'utf-8'),
-    readFileSync(join(migrationsDir, '0005_references.sql'), 'utf-8'),
-    readFileSync(join(migrationsDir, '0006_composite_indexes.sql'), 'utf-8'),
-  ];
+  return loadMigrationsFromDir(migrationsDir);
 }
 
 // Parse command line arguments

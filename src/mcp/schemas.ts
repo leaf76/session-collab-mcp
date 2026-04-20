@@ -100,7 +100,7 @@ export const claimUpdatePrioritySchema = z.object({
 export const claimCheckSchema = z.object({
   files: filesArraySchema,
   symbols: symbolClaimsArraySchema.optional(),
-  session_id: z.string().optional(),
+  session_id: sessionIdSchema,
   exclude_self: z.boolean().optional(),
 });
 

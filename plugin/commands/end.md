@@ -14,17 +14,18 @@ If session ID is not known, call `mcp__session-collab__collab_session_list` to f
 
 ### 2. Check Unreleased Claims (IMPORTANT)
 
-**Before ending**, call `mcp__session-collab__collab_claims_list` with:
+**Before ending**, call `mcp__session-collab__collab_claim` with:
+- `action`: `"list"`
 - `session_id`: Your current session ID
 - `status`: "active"
 
-This shows all claims that will be released. Review them to decide if they should be marked as "complete" or "abandon".
+This shows all claims that will be released. Review them to decide if they should be marked as `"complete"` or `"abandon"`.
 
 ### 3. End Session
 
 Call `mcp__session-collab__collab_session_end` with:
 - `session_id`: Your current session ID
-- `release_claims`: "complete" (mark work as done) or "abandon" (if work is incomplete)
+- `release_claims`: `"complete"` (mark work as done) or `"abandon"` (if work is incomplete)
 
 ## Output Format
 
@@ -52,6 +53,6 @@ Session collaboration has been terminated. All claims have been released.
 ## Notes
 
 - **Always review claims before ending** to ensure correct status
-- Use "complete" when you finished your work successfully
-- Use "abandon" if you need to stop without finishing
+- Use `"complete"` when you finished your work successfully
+- Use `"abandon"` if you need to stop without finishing
 - Other sessions will be able to claim the released files

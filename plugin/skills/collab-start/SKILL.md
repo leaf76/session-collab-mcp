@@ -6,7 +6,7 @@ allowed-tools: mcp__session-collab__*
 
 # Session Collaboration Startup
 
-Initialize session collaboration to prevent conflicts when multiple Claude Code sessions work on the same codebase.
+Initialize session collaboration to prevent conflicts when multiple agent sessions work on the same codebase.
 
 ## Required Actions
 
@@ -18,33 +18,33 @@ Call `mcp__session-collab__collab_session_start` with:
 - `project_root`: Current working directory
 - `name`: A descriptive name based on the task (e.g., "feature-auth", "bugfix-api")
 
-**Important:** Store the `session_id` from the response - you need it for all subsequent calls.
+**Important:** Store the `session_id` from the response. You need it for all subsequent calls.
 
 ### Step 2: Review Active Sessions
 
 Check the response for:
 - Number of active sessions
-- Other session names and their last activity time
-- `memory_hint`: Whether other sessions have working memories
+- Other session names
+- Restored context from previous sessions
 
 If other sessions are active, inform the user about potential collaboration.
 
 ### Step 3: Check Existing Claims
 
-Call `mcp__session-collab__collab_claims_list` with:
-- `status`: "active"
-- `project_root`: Current working directory
+Call `mcp__session-collab__collab_claim` with:
+- `action`: `"list"`
+- `session_id`: Your session ID
 
 If there are active claims:
-- List which files/symbols are claimed
+- List which files or symbols are claimed
 - Show which session holds each claim
 - Display the stated intent
 
 ### Step 4: Load Working Memory (Recommended)
 
-Call `mcp__session-collab__collab_memory_active` with:
+Call `mcp__session-collab__collab_memory_recall` with:
 - `session_id`: Your session ID
-- `priority_threshold`: 70 (default, gets pinned + high priority memories)
+- `active`: `true`
 
 This retrieves important context from previous work:
 - **Findings**: Discovered facts, root causes
@@ -89,8 +89,8 @@ Provide a summary in the user's language:
 Display relevant findings, decisions, or important notes from working memory.
 
 ### Reminders
-- Always call `collab_check` before editing files
-- Use `collab_claim` to reserve files before modification
-- Use `collab_memory_save` to persist important findings/decisions
-- Call `collab_release` when done with files
+- Always call `collab_claim` with `action="check"` before editing files
+- Use `collab_claim` with `action="create"` to reserve files before modification
+- Use `collab_memory_save` to persist important findings or decisions
+- Call `collab_claim` with `action="release"` when done with files
 - Call `collab_session_end` when conversation ends

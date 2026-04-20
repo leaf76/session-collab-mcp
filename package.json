@@ -1,15 +1,17 @@
 {
   "name": "session-collab-mcp",
   "version": "2.1.0",
-  "description": "MCP server for Claude Code session collaboration - prevents conflicts, persists context, and protects important files",
+  "description": "Provider-agnostic MCP collaboration server for agent sessions - prevents conflicts, persists context, and protects important files",
   "license": "MIT",
   "keywords": [
     "mcp",
-    "claude",
-    "claude-code",
+    "agent",
+    "ai-agent",
     "collaboration",
     "session",
-    "conflict-prevention"
+    "conflict-prevention",
+    "working-memory",
+    "conflict-detection"
   ],
   "type": "module",
   "bin": {
@@ -37,10 +39,13 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "tsx": "^4.19.2",
     "@types/better-sqlite3": "^7.6.12",
+    "@typescript-eslint/eslint-plugin": "^8.58.2",
+    "@typescript-eslint/parser": "^8.58.2",
     "eslint": "^9.17.0",
+    "fast-check": "^4.7.0",
     "tsup": "^8.5.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

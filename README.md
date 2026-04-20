@@ -3,11 +3,11 @@
 [![npm version](https://img.shields.io/npm/v/session-collab-mcp.svg)](https://www.npmjs.com/package/session-collab-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Model Context Protocol (MCP) server for Claude Code that prevents conflicts when multiple sessions work on the same codebase simultaneously.
+A provider-agnostic Model Context Protocol (MCP) server that prevents conflicts when multiple agent sessions work on the same codebase simultaneously.
 
 ## Problem
 
-When using parallel Claude Code sessions or the parallel-dev workflow:
+When using parallel coding-agent sessions or multi-agent workflows:
 
 - Session A is refactoring some code
 - Session B doesn't know and thinks the code "has issues" - deletes or reverts it
@@ -25,29 +25,20 @@ Session Collab MCP provides a **Work-in-Progress (WIP) Registry** that allows se
 4. **Protect** - Guard critical files from accidental changes
 5. **Release** - Free files when done
 
+## Positioning
+
+`session-collab-mcp` has two layers:
+
+- **Core server**: provider-agnostic MCP server over stdio or HTTP JSON-RPC
+- **Optional integrations**: provider-specific packaging such as the Claude Code plugin in [`plugin/`](plugin/)
+
+The core server should be the default mental model. Claude Code is one integration target, not the product boundary.
+
 ## Installation
 
-### Option 1: Claude Code Plugin (Recommended)
+### Option 1: Generic MCP Client over stdio
 
-Install as a Claude Code plugin for automatic MCP server setup, hooks, and skills:
-
-```bash
-# Add marketplace
-/plugin marketplace add leaf76/session-collab-mcp
-
-# Install plugin
-/plugin install session-collab@session-collab-plugins
-```
-
-The plugin includes:
-- **MCP Server**: Automatically configured
-- **Hooks**: SessionStart and PreToolUse reminders
-- **Skills**: `collab-start` for full initialization
-- **Commands**: `/session-collab:status` and `/session-collab:end`
-
-### Option 2: MCP Server Only
-
-Add to your `~/.claude.json`:
+Use this with any MCP client that can launch a local stdio server:
 
 ```json
 {
@@ -60,34 +51,59 @@ Add to your `~/.claude.json`:
 }
 ```
 
-### Option 3: Global Installation
+The exact config wrapper depends on your MCP client, but the server contract is the same.
 
-```bash
-npm install -g session-collab-mcp
-```
+### Option 2: HTTP Server + CLI
 
-### Option 4: HTTP Server + CLI (Universal)
+Use this when your client prefers MCP over HTTP JSON-RPC or when you want a generic shell-friendly wrapper:
 
 ```bash
 # Start HTTP server
 session-collab-http --host 127.0.0.1 --port 8765
 
-# CLI wrapper (HTTP client)
+# CLI wrapper (convenience REST client)
 session-collab health
 session-collab tools
 session-collab call --name collab_session_start --args '{"project_root":"/repo","name":"demo"}'
 ```
 
+For MCP-over-HTTP clients, use `POST /mcp` with JSON-RPC requests. The `/v1/*` endpoints are a convenience REST facade for lightweight automation and shell usage.
+
+### Option 3: Claude Code Plugin (Optional Integration)
+
+Install as a Claude Code plugin only if Claude Code is your MCP client and you want automatic server setup, hooks, and skills:
+
+```bash
+# Add marketplace
+/plugin marketplace add leaf76/session-collab-mcp
+
+# Install plugin
+/plugin install session-collab@session-collab-plugins
+```
+
+The plugin includes:
+- **MCP Server**: Automatically configured
+- **Hooks**: SessionStart, Stop, and PreCompact reminders
+- **Skills**: `collab-start` for full initialization
+- **Commands**: `/session-collab:status` and `/session-collab:end`
+
+### Option 4: Global Installation
+
+```bash
+npm install -g session-collab-mcp
+```
+
 ## Features
 
-### Automatic Session Management
+### Guided Session Workflow
 
-Once installed, Claude will:
+The MCP tools give you a stable collaboration workflow across providers:
 
-1. Register a session when conversation starts
-2. Check for conflicts before editing files
-3. Warn you if another session is working on the same files
-4. Clean up when the conversation ends
+1. Start a session with `collab_session_start`
+2. Check files with `collab_claim(action="check")`
+3. Reserve files with `collab_claim(action="create")`
+4. Save important context with `collab_memory_save`
+5. End the session with `collab_session_end`
 
 ### Working Memory
 
@@ -102,11 +118,11 @@ Context persistence that survives context compaction:
 
 ### File Protection
 
-Guard critical files from accidental changes:
+Guard important plan files or created files from accidental deletion:
 
-- Register protected files with reasons and priorities
-- Automatic conflict detection for protected files
-- Configurable protection levels
+- Register a protected plan with `collab_protect(action="register", type="plan", ...)`
+- Register a created file with `collab_protect(action="register", type="file", ...)`
+- Check protection status before deleting or replacing a file
 
 ### Conflict Handling Modes
 
@@ -167,7 +183,7 @@ Configure behavior with `collab_config`:
 
 ### HTTP API (v1)
 
-Core endpoints map 1:1 to MCP tools:
+`/v1/*` endpoints map 1:1 to MCP tools and return JSON responses with `trace_id` on failures:
 
 - `POST /v1/sessions/start` → `collab_session_start`
 - `POST /v1/sessions/end` → `collab_session_end`
@@ -186,6 +202,13 @@ Core endpoints map 1:1 to MCP tools:
 - `GET /v1/protect/list` → `collab_protect` (list)
 - `POST /v1/tools/call` / `GET /v1/tools` (generic access)
 
+### MCP over HTTP
+
+- `POST /mcp` accepts JSON-RPC `initialize`, `tools/list`, and `tools/call` requests
+- `GET /mcp` currently returns a clear "stream not supported" response instead of pretending to be full Streamable HTTP SSE
+- Localhost binds enforce Host and Origin validation
+- Non-local binds require both `SESSION_COLLAB_HTTP_TOKEN` and an allowed-host list via `SESSION_COLLAB_ALLOWED_HOSTS` or repeated `--allowed-host`
+
 ## Usage Examples
 
 ### Basic Workflow
@@ -193,17 +216,17 @@ Core endpoints map 1:1 to MCP tools:
 ```bash
 # Session A starts working
 collab_session_start(project_root="/my/project", name="feature-auth")
-collab_claim(action="create", files=["src/auth.ts"], intent="Adding JWT support")
+collab_claim(session_id="session-a", action="create", files=["src/auth.ts"], intent="Adding JWT support")
 
 # Session B checks before editing
-collab_claim(action="check", files=["src/auth.ts"])
+collab_claim(session_id="session-b", action="check", files=["src/auth.ts"])
 # Result: "CONFLICT: src/auth.ts is claimed by 'feature-auth'"
 
 # If you want to include your own claims in the check
-collab_claim(action="check", files=["src/auth.ts"], exclude_self=false)
+collab_claim(session_id="session-a", action="check", files=["src/auth.ts"], exclude_self=false)
 
 # Session A finishes
-collab_claim(action="release", claim_id="...")
+collab_claim(session_id="session-a", action="release", claim_id="...")
 ```
 
 ### Working Memory
@@ -211,6 +234,7 @@ collab_claim(action="release", claim_id="...")
 ```bash
 # Save a finding
 collab_memory_save(
+  session_id="abc123",
   category="finding",
   key="auth_bug_root_cause",
   content="Missing token validation in refresh flow",
@@ -218,26 +242,29 @@ collab_memory_save(
 )
 
 # Recall active memories
-collab_memory_recall(active=true, priority_threshold=70)
+collab_memory_recall(session_id="abc123", active=true)
 ```
 
 ### File Protection
 
 ```bash
-# Protect critical file
+# Protect a plan document
 collab_protect(
   action="register",
-  file_path="src/core/auth.ts",
-  reason="Core authentication logic",
-  priority=95
+  session_id="abc123",
+  type="plan",
+  file_path="docs/feature-plan.md",
+  title="Feature plan",
+  content_summary="Steps, risks, and rollout notes"
 )
 
 # Check before editing
 collab_protect(
   action="check",
-  file_paths=["src/core/auth.ts"]
+  session_id="abc123",
+  file_path="docs/feature-plan.md"
 )
-# Result: "BLOCKED: File is protected - Core authentication logic"
+# Result: "Protected (plan). Confirm before deleting."
 ```
 
 ### Status Monitoring
@@ -248,7 +275,7 @@ collab_status(session_id="abc123")
 # Result: {
 #   session: { id: "abc123", name: "feature-auth", status: "active" },
 #   claims: [...],
-#   active_memories: 5,
+#   other_sessions: 1,
 #   message: "Session active. 2 claim(s), 5 memories."
 # }
 ```
@@ -269,7 +296,8 @@ Version 2.0 introduces breaking changes with a simplified API. See [MIGRATION.md
 All data is stored locally in `~/.claude/session-collab/collab.db` (SQLite).
 
 - No remote server required
-- No API token needed
+- Localhost HTTP usage works without an API token
+- Non-local HTTP binds require `SESSION_COLLAB_HTTP_TOKEN`
 - Works offline
 - Uses WAL mode for multi-process safety
 
@@ -316,13 +344,17 @@ HTTP integration tests require a local listen port. Enable them with:
 SESSION_COLLAB_HTTP_TESTS=true npx vitest run src/http/__tests__/server-integration.test.ts
 ```
 
+### Historical Notes
+
+The changelog entries below document historical milestones, including tools and workflows that were removed before the current v2 API. Treat the tool tables and examples above as the source of truth for the current public surface.
+
 ### Project Structure
 
 ```
 session-collab-mcp/
 ├── bin/                    # Executable entry point
 ├── migrations/             # SQLite migration files
-├── plugin/                 # Claude Code Plugin
+├── plugin/                 # Optional Claude Code integration
 ├── src/
 │   ├── cli.ts             # CLI entry point
 │   ├── constants.ts       # Version and server instructions

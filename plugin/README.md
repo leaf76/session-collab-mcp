@@ -1,9 +1,12 @@
 # Session Collab Plugin
 
-Claude Code plugin for AI context persistence and multi-session collaboration.
+Claude Code integration for the `session-collab-mcp` server.
+
+Use this plugin only when your MCP client is Claude Code. The core server itself is provider-agnostic and can be used from any MCP client that supports stdio or HTTP JSON-RPC.
 
 ## Features
 
+- Automatic Claude Code plugin wiring for the MCP server
 - Context persistence across conversations
 - Conflict avoidance with file/symbol claims
 - Protected files and session status summary
@@ -17,6 +20,8 @@ Claude Code plugin for AI context persistence and multi-session collaboration.
 # Install plugin
 /plugin install session-collab@session-collab-plugins
 ```
+
+If you are not using Claude Code, use the root project README instead and connect to the MCP server over stdio or `POST /mcp`.
 
 ## Quick Start
 

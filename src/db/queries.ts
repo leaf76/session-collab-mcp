@@ -17,7 +17,9 @@ import type {
   AuditHistoryEntry,
   AuditHistoryWithSession,
   AuditMetadata,
-} from './types';
+  MemoryCategory,
+  } from './types';
+import type { WorkingMemory, WorkingMemoryInput } from './types';
 import { generateId } from '../utils/crypto.js';
 
 // ============ Session Queries ============

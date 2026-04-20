@@ -52,9 +52,9 @@ export async function handleClaimTool(
 
 ```typescript
 if (name.startsWith('collab_session_')) → handleSessionTool
-if (name.startsWith('collab_claim') || name === 'collab_check') → handleClaimTool
-if (name.startsWith('collab_message_')) → handleMessageTool
-// ... etc
+if (name === 'collab_claim') → handleClaimTool
+if (name.startsWith('collab_memory_')) → handleMemoryTool
+if (name === 'collab_protect') → handleProtectionTool
 ```
 
 ## Common Patterns

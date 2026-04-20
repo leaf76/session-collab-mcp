@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
+import { splitMigrationStatements } from './migrations.js';
 
 // Polyfill crypto.randomUUID for Node.js
 if (typeof globalThis.crypto === 'undefined') {
@@ -133,11 +134,7 @@ class SqliteDatabase implements DatabaseAdapter {
   // Handles upgrades gracefully by ignoring "already exists" and "duplicate column" errors
   initSchema(migrations: string[]): void {
     for (const migration of migrations) {
-      // Split migration into individual statements for granular error handling
-      const statements = migration
-        .split(';')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0 && !s.startsWith('--'));
+      const statements = splitMigrationStatements(migration);
 
       for (const stmt of statements) {
         try {

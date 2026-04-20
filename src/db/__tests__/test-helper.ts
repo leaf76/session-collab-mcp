@@ -1,6 +1,9 @@
 // Test helper: In-memory SQLite database for testing
 import Database from 'better-sqlite3';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import type { DatabaseAdapter, PreparedStatement, QueryResult } from '../sqlite-adapter.js';
+import { loadMigrationsFromDir, splitMigrationStatements } from '../migrations.js';
 
 class TestPreparedStatement implements PreparedStatement {
   private bindings: unknown[] = [];
@@ -44,201 +47,9 @@ class TestPreparedStatement implements PreparedStatement {
   }
 }
 
-// Schema statements split for initialization
-const SCHEMA_STATEMENTS = [
-  // Sessions table
-  `CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    project_root TEXT NOT NULL,
-    machine_id TEXT,
-    user_id TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    last_heartbeat TEXT DEFAULT (datetime('now')),
-    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'terminated')),
-    current_task TEXT,
-    progress TEXT,
-    todos TEXT,
-    config TEXT
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)`,
-  `CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_root)`,
-
-  // Claims table
-  `CREATE TABLE IF NOT EXISTS claims (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    intent TEXT NOT NULL,
-    scope TEXT DEFAULT 'medium' CHECK (scope IN ('small', 'medium', 'large')),
-    priority INTEGER DEFAULT 50 CHECK (priority >= 0 AND priority <= 100),
-    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed', 'abandoned')),
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-    completed_summary TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_claims_session ON claims(session_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status)`,
-  `CREATE INDEX IF NOT EXISTS idx_claims_priority ON claims(priority)`,
-
-  // Claim files
-  `CREATE TABLE IF NOT EXISTS claim_files (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    claim_id TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    is_pattern INTEGER DEFAULT 0,
-    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
-    UNIQUE(claim_id, file_path)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_claim_files_path ON claim_files(file_path)`,
-  `CREATE INDEX IF NOT EXISTS idx_claim_files_claim ON claim_files(claim_id)`,
-
-  // Claim symbols
-  `CREATE TABLE IF NOT EXISTS claim_symbols (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    claim_id TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    symbol_name TEXT NOT NULL,
-    symbol_type TEXT DEFAULT 'function' CHECK (symbol_type IN ('function', 'class', 'method', 'variable', 'block', 'other')),
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
-    UNIQUE(claim_id, file_path, symbol_name)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_claim_symbols_path ON claim_symbols(file_path)`,
-  `CREATE INDEX IF NOT EXISTS idx_claim_symbols_name ON claim_symbols(symbol_name)`,
-  `CREATE INDEX IF NOT EXISTS idx_claim_symbols_claim ON claim_symbols(claim_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_claim_symbols_lookup ON claim_symbols(file_path, symbol_name)`,
-
-  // Messages table
-  `CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    from_session_id TEXT NOT NULL,
-    to_session_id TEXT,
-    content TEXT NOT NULL,
-    read_at TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (from_session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_session_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(to_session_id, read_at)`,
-
-  // Decisions table
-  `CREATE TABLE IF NOT EXISTS decisions (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    category TEXT CHECK (category IN ('architecture', 'naming', 'api', 'database', 'ui', 'other')),
-    title TEXT NOT NULL,
-    description TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_decisions_category ON decisions(category)`,
-
-  // Symbol references
-  `CREATE TABLE IF NOT EXISTS symbol_references (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_file TEXT NOT NULL,
-    source_symbol TEXT NOT NULL,
-    ref_file TEXT NOT NULL,
-    ref_line INTEGER,
-    ref_context TEXT,
-    session_id TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    UNIQUE(source_file, source_symbol, ref_file, ref_line)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_symbol_refs_source ON symbol_references(source_file, source_symbol)`,
-  `CREATE INDEX IF NOT EXISTS idx_symbol_refs_ref_file ON symbol_references(ref_file)`,
-  `CREATE INDEX IF NOT EXISTS idx_symbol_refs_session ON symbol_references(session_id)`,
-
-  // Audit history table
-  `CREATE TABLE IF NOT EXISTS audit_history (
-    id TEXT PRIMARY KEY,
-    session_id TEXT,
-    action TEXT NOT NULL CHECK (action IN (
-      'session_started', 'session_ended',
-      'claim_created', 'claim_released', 'conflict_detected',
-      'queue_joined', 'queue_left', 'priority_changed'
-    )),
-    entity_type TEXT NOT NULL CHECK (entity_type IN ('session', 'claim', 'queue')),
-    entity_id TEXT NOT NULL,
-    metadata TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_history_session ON audit_history(session_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_history_action ON audit_history(action)`,
-  `CREATE INDEX IF NOT EXISTS idx_history_created ON audit_history(created_at)`,
-
-  // Claim queue table
-  `CREATE TABLE IF NOT EXISTS claim_queue (
-    id TEXT PRIMARY KEY,
-    claim_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    intent TEXT NOT NULL,
-    position INTEGER NOT NULL,
-    priority INTEGER DEFAULT 50 CHECK (priority >= 0 AND priority <= 100),
-    scope TEXT DEFAULT 'medium' CHECK (scope IN ('small', 'medium', 'large')),
-    estimated_wait_minutes INTEGER,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    UNIQUE(claim_id, session_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_queue_claim ON claim_queue(claim_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_queue_session ON claim_queue(session_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_queue_priority ON claim_queue(priority DESC, position ASC)`,
-
-  // Notifications table
-  `CREATE TABLE IF NOT EXISTS notifications (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN (
-      'claim_released', 'queue_ready', 'conflict_detected', 'session_message'
-    )),
-    title TEXT NOT NULL,
-    message TEXT NOT NULL,
-    reference_type TEXT,
-    reference_id TEXT,
-    metadata TEXT,
-    read_at TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_notifications_session ON notifications(session_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(session_id, read_at)`,
-
-  // Composite indexes for common query patterns
-  `CREATE INDEX IF NOT EXISTS idx_sessions_status_heartbeat ON sessions(status, last_heartbeat)`,
-  `CREATE INDEX IF NOT EXISTS idx_claims_status_session ON claims(status, session_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_claim_files_path_claim ON claim_files(file_path, claim_id)`,
-
-  // Working memory table for context persistence
-  `CREATE TABLE IF NOT EXISTS working_memory (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    category TEXT NOT NULL CHECK (category IN ('finding', 'decision', 'state', 'todo', 'important', 'context')),
-    key TEXT NOT NULL,
-    content TEXT NOT NULL,
-    priority INTEGER DEFAULT 50 CHECK (priority >= 0 AND priority <= 100),
-    pinned INTEGER DEFAULT 0 CHECK (pinned IN (0, 1)),
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
-    expires_at TEXT,
-    related_claim_id TEXT,
-    related_decision_id TEXT,
-    metadata TEXT,
-    UNIQUE(session_id, category, key),
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-    FOREIGN KEY (related_claim_id) REFERENCES claims(id) ON DELETE SET NULL,
-    FOREIGN KEY (related_decision_id) REFERENCES decisions(id) ON DELETE SET NULL
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_working_memory_session ON working_memory(session_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_working_memory_category ON working_memory(session_id, category)`,
-  `CREATE INDEX IF NOT EXISTS idx_working_memory_key ON working_memory(session_id, key)`,
-  `CREATE INDEX IF NOT EXISTS idx_working_memory_priority ON working_memory(session_id, pinned DESC, priority DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_working_memory_expires ON working_memory(expires_at)`,
-];
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = join(__dirname, '..', '..', '..', 'migrations');
+const SCHEMA_STATEMENTS = loadMigrationsFromDir(MIGRATIONS_DIR);
 
 const CLEANUP_STATEMENTS = [
   'DELETE FROM working_memory',
@@ -265,8 +76,12 @@ export class TestDatabase implements DatabaseAdapter {
   }
 
   private initSchema(): void {
-    for (const sql of SCHEMA_STATEMENTS) {
-      this.db.prepare(sql).run();
+    for (const migration of SCHEMA_STATEMENTS) {
+      const statements = splitMigrationStatements(migration);
+
+      for (const statement of statements) {
+        this.db.prepare(statement).run();
+      }
     }
   }
 

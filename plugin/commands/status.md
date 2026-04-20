@@ -14,17 +14,16 @@ Call `mcp__session-collab__collab_session_list` with:
 - `project_root`: Current working directory
 - `include_inactive`: false
 
-### 2. List Active Claims
+### 2. List Current Session Claims
 
-Call `mcp__session-collab__collab_claims_list` with:
-- `status`: "active"
-- `project_root`: Current working directory
+If you know the current session ID, call `mcp__session-collab__collab_claim` with:
+- `action`: `"list"`
+- `session_id`: Current session ID
 
-### 3. Check Messages
+### 3. Load Session Summary
 
-Call `mcp__session-collab__collab_message_list` with:
-- `session_id`: Current session ID (if available)
-- `unread_only`: true
+If you know the current session ID, call `mcp__session-collab__collab_status` with:
+- `session_id`: Current session ID
 
 ## Output Format
 
@@ -45,16 +44,18 @@ Provide a clear status report:
 | `id-1` | name-1 | X min ago |
 | `id-2` | name-2 | Y min ago |
 
-#### Active Claims (M total)
+#### Active Claims (for current session, if available)
 | File/Symbol | Session | Intent | Scope |
 |-------------|---------|--------|-------|
 | `src/file.ts` | session-1 | "description" | medium |
 
-#### Unread Messages
-- From `session-x`: "message content"
+#### Session Summary (if available)
+- Active claims count
+- Restored memories or current context
+- Other active sessions in the same project
 
 ### Quick Actions
 - Start session: Call `collab_session_start`
-- Check file: Call `collab_check` with file path
-- Claim file: Call `collab_claim` with file path and intent
+- Check file: Call `collab_claim` with `action="check"`
+- Claim file: Call `collab_claim` with `action="create"`
 - End session: Call `collab_session_end`
