@@ -408,7 +408,7 @@ session-collab-mcp/
 
 ## Changelog
 
-### v2.3.0
+### v2.3.1
 
 - Add `collab_session_update` for heartbeat, current task, todo, and progress reporting
 - Enrich `collab_session_list` with current task and active claim summaries
