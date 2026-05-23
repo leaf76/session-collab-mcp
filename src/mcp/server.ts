@@ -18,8 +18,13 @@ import { sessionTools, handleSessionTool } from './tools/session.js';
 import { claimTools, handleClaimTool } from './tools/claim.js';
 import { memoryTools, handleMemoryTool } from './tools/memory.js';
 import { protectionTools, handleProtectionTool } from './tools/protection.js';
-import type { AuthContext } from '../auth/types.js';
 import { VERSION, SERVER_NAME, SERVER_INSTRUCTIONS } from '../constants.js';
+
+type AuthContext = {
+  type: 'jwt' | 'api_token' | 'legacy';
+  userId?: string;
+  tokenId?: string;
+};
 
 const SERVER_INFO: McpServerInfo = {
   name: SERVER_NAME,

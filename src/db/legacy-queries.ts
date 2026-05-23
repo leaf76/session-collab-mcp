@@ -398,6 +398,7 @@ export async function listQueue(
     SELECT
       q.*,
       s.name as session_name,
+      c.session_id as owner_session_id,
       c.intent as claim_intent,
       cs.name as claim_session_name,
       GROUP_CONCAT(cf.file_path, '|||') as claim_files_concat
@@ -427,6 +428,7 @@ export async function listQueue(
     .bind(...bindings)
     .all<QueueEntry & {
       session_name: string | null;
+      owner_session_id: string;
       claim_intent: string;
       claim_session_name: string | null;
       claim_files_concat: string | null;

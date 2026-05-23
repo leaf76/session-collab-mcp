@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDatabase, TestDatabase } from '../../db/__tests__/test-helper.js';
 import { handleClaimTool } from '../tools/claim.js';
 import { createSession, createClaim, getClaim } from '../../db/queries.js';
+import { handleSessionTool } from '../tools/session.js';
 
 describe('Claim Tools', () => {
   let db: TestDatabase;
@@ -38,6 +39,220 @@ describe('Claim Tools', () => {
         expect(result.isError).toBeFalsy();
         const response = JSON.parse(result.content[0].text);
         expect(response.success).toBe(true);
+        expect(response.claim_id).toBeDefined();
+      });
+
+      it('should block claim creation in strict mode when another active session has a conflict', async () => {
+        const otherSession = await createSession(db, {
+          project_root: '/test/project',
+          name: 'other-session',
+        });
+
+        await handleSessionTool(db, 'collab_config', {
+          session_id: sessionId,
+          mode: 'strict',
+        });
+
+        await createClaim(db, {
+          session_id: otherSession.id,
+          files: ['src/conflict.ts'],
+          intent: 'Other active work',
+          scope: 'small',
+        });
+
+        const result = await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: sessionId,
+          files: ['src/conflict.ts'],
+          intent: 'Conflicting work',
+        });
+
+        expect(result.isError).toBeFalsy();
+        const response = JSON.parse(result.content[0].text);
+        expect(response.success).toBe(false);
+        expect(response.status).toBe('blocked_by_conflicts');
+        expect(response.claim_id).toBeUndefined();
+
+        const list = await handleClaimTool(db, 'collab_claim', {
+          action: 'list',
+          session_id: otherSession.id,
+          project_root: '/test/project',
+        });
+        const listResponse = JSON.parse(list.content[0].text);
+        expect(listResponse.claims).toHaveLength(1);
+        expect(listResponse.claims[0].session_name).toBe('other-session');
+      });
+
+      it('should wait for coordination in smart mode when the same symbol is claimed', async () => {
+        const otherSession = await createSession(db, {
+          project_root: '/test/project',
+          name: 'owner-session',
+        });
+
+        await handleSessionTool(db, 'collab_session_update', {
+          session_id: otherSession.id,
+          current_task: 'Editing validateToken',
+        });
+
+        await createClaim(db, {
+          session_id: otherSession.id,
+          files: ['src/auth.ts'],
+          symbols: [{ file: 'src/auth.ts', symbols: ['validateToken'], symbol_type: 'function' }],
+          intent: 'Update token validation',
+          scope: 'small',
+        });
+
+        const result = await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: sessionId,
+          symbols: [{ file: 'src/auth.ts', symbols: ['validateToken'], symbol_type: 'function' }],
+          intent: 'Refactor token validation',
+        });
+
+        expect(result.isError).toBeFalsy();
+        const response = JSON.parse(result.content[0].text);
+        expect(response.success).toBe(false);
+        expect(response.status).toBe('waiting_for_coordination');
+        expect(response.claim_id).toBeUndefined();
+        expect(response.safe_files).toEqual([]);
+        expect(response.blocked_files).toEqual(['src/auth.ts']);
+        expect(response.conflicts[0]).toMatchObject({
+          session_id: otherSession.id,
+          session_name: 'owner-session',
+          file: 'src/auth.ts',
+          symbol_name: 'validateToken',
+          current_task: 'Editing validateToken',
+        });
+        expect(response.coordination_requests).toHaveLength(1);
+        expect(response.coordination_requests[0]).toMatchObject({
+          owner_session_id: otherSession.id,
+          requested_by_session_id: sessionId,
+          files: ['src/auth.ts'],
+        });
+      });
+
+      it('should create a symbol claim in smart mode when symbols do not overlap', async () => {
+        const otherSession = await createSession(db, {
+          project_root: '/test/project',
+          name: 'owner-session',
+        });
+
+        await createClaim(db, {
+          session_id: otherSession.id,
+          files: ['src/auth.ts'],
+          symbols: [{ file: 'src/auth.ts', symbols: ['validateToken'], symbol_type: 'function' }],
+          intent: 'Update token validation',
+          scope: 'small',
+        });
+
+        const result = await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: sessionId,
+          symbols: [{ file: 'src/auth.ts', symbols: ['refreshToken'], symbol_type: 'function' }],
+          intent: 'Update refresh token',
+        });
+
+        expect(result.isError).toBeFalsy();
+        const response = JSON.parse(result.content[0].text);
+        expect(response.success).toBe(true);
+        expect(response.status).toBe('created');
+        expect(response.claim_id).toBeDefined();
+        expect(response.claimed_files).toEqual(['src/auth.ts']);
+        expect(response.blocked_files).toEqual([]);
+      });
+
+      it('should ask for narrower symbols or wait when a file-level claim blocks a symbol claim', async () => {
+        const otherSession = await createSession(db, {
+          project_root: '/test/project',
+          name: 'owner-session',
+        });
+
+        await createClaim(db, {
+          session_id: otherSession.id,
+          files: ['src/auth.ts'],
+          intent: 'Broad auth refactor',
+          scope: 'medium',
+        });
+
+        const result = await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: sessionId,
+          symbols: [{ file: 'src/auth.ts', symbols: ['refreshToken'], symbol_type: 'function' }],
+          intent: 'Update refresh token',
+        });
+
+        expect(result.isError).toBeFalsy();
+        const response = JSON.parse(result.content[0].text);
+        expect(response.success).toBe(false);
+        expect(response.status).toBe('waiting_for_coordination');
+        expect(response.recommendation).toBe('provide_symbols_or_wait');
+        expect(response.coordination_requests).toHaveLength(1);
+      });
+
+      it('should partially claim safe files in smart mode and queue blocked files', async () => {
+        const otherSession = await createSession(db, {
+          project_root: '/test/project',
+          name: 'owner-session',
+        });
+
+        await createClaim(db, {
+          session_id: otherSession.id,
+          files: ['src/blocked.ts'],
+          intent: 'Edit blocked file',
+          scope: 'small',
+        });
+
+        const result = await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: sessionId,
+          files: ['src/safe.ts', 'src/blocked.ts'],
+          intent: 'Edit mixed files',
+        });
+
+        expect(result.isError).toBeFalsy();
+        const response = JSON.parse(result.content[0].text);
+        expect(response.success).toBe(true);
+        expect(response.status).toBe('partial_claim_created');
+        expect(response.claim_id).toBeDefined();
+        expect(response.claimed_files).toEqual(['src/safe.ts']);
+        expect(response.safe_files).toEqual(['src/safe.ts']);
+        expect(response.blocked_files).toEqual(['src/blocked.ts']);
+        expect(response.coordination_requests).toHaveLength(1);
+
+        const claim = await getClaim(db, response.claim_id);
+        expect(claim?.files).toEqual(['src/safe.ts']);
+      });
+
+      it('should allow explicit conflict claim creation in bypass mode when allow_conflicts is true', async () => {
+        const otherSession = await createSession(db, {
+          project_root: '/test/project',
+          name: 'other-session',
+        });
+
+        await handleSessionTool(db, 'collab_config', {
+          session_id: sessionId,
+          mode: 'bypass',
+        });
+
+        await createClaim(db, {
+          session_id: otherSession.id,
+          files: ['src/force-conflict.ts'],
+          intent: 'Other active work',
+          scope: 'small',
+        });
+
+        const result = await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: sessionId,
+          files: ['src/force-conflict.ts'],
+          intent: 'Explicitly coordinated conflicting work',
+          allow_conflicts: true,
+        });
+
+        expect(result.isError).toBeFalsy();
+        const response = JSON.parse(result.content[0].text);
+        expect(response.success).toBe(true);
+        expect(response.status).toBe('created_with_conflicts');
         expect(response.claim_id).toBeDefined();
       });
 

@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDatabase, TestDatabase } from '../../db/__tests__/test-helper.js';
 import { handleSessionTool } from '../tools/session.js';
-import { createSession, createClaim, listClaims } from '../../db/queries.js';
+import { createSession, createClaim, listClaims, getSession, joinQueue } from '../../db/queries.js';
 
 describe('Session Tools', () => {
   let db: TestDatabase;
@@ -88,6 +88,125 @@ describe('Session Tools', () => {
       expect(response.sessions).toHaveLength(2);
       expect(response.sessions.some((s: { id: string }) => s.id === otherSession.id)).toBe(false);
     });
+
+    it('should include active claim summaries and current task for each session', async () => {
+      const session = await createSession(db, {
+        project_root: '/test/project',
+        name: 'summary-session',
+      });
+
+      await createClaim(db, {
+        session_id: session.id,
+        files: ['src/summary.ts'],
+        intent: 'Summarize active work',
+        scope: 'small',
+        priority: 75,
+      });
+
+      await handleSessionTool(db, 'collab_session_update', {
+        session_id: session.id,
+        current_task: 'Writing session summary',
+      });
+
+      const result = await handleSessionTool(db, 'collab_session_list', {
+        project_root: '/test/project',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      const listed = response.sessions.find((s: { id: string }) => s.id === session.id);
+      expect(listed.current_task).toBe('Writing session summary');
+      expect(listed.active_claims).toBe(1);
+      expect(listed.claims).toHaveLength(1);
+      expect(listed.claims[0]).toMatchObject({
+        files: ['src/summary.ts'],
+        intent: 'Summarize active work',
+      });
+      expect(listed.claims[0].priority.level).toBe('high');
+    });
+
+    it('should include pending coordination summaries for waiting and owning sessions', async () => {
+      const owner = await createSession(db, {
+        project_root: '/test/project',
+        name: 'owner-session',
+      });
+      const waiter = await createSession(db, {
+        project_root: '/test/project',
+        name: 'waiter-session',
+      });
+
+      const ownerClaim = await createClaim(db, {
+        session_id: owner.id,
+        files: ['src/shared.ts'],
+        intent: 'Owner work',
+        scope: 'small',
+      });
+
+      await joinQueue(db, {
+        claim_id: ownerClaim.claim.id,
+        session_id: waiter.id,
+        intent: 'Waiting work',
+        priority: 80,
+        scope: 'small',
+      });
+
+      const result = await handleSessionTool(db, 'collab_session_list', {
+        project_root: '/test/project',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      const listedOwner = response.sessions.find((s: { id: string }) => s.id === owner.id);
+      const listedWaiter = response.sessions.find((s: { id: string }) => s.id === waiter.id);
+
+      expect(listedOwner.pending_coordination.incoming).toBe(1);
+      expect(listedOwner.coordination_requests[0]).toMatchObject({
+        requested_by_session_id: waiter.id,
+        requested_by_session_name: 'waiter-session',
+        owner_claim_id: ownerClaim.claim.id,
+        files: ['src/shared.ts'],
+      });
+      expect(listedWaiter.pending_coordination.outgoing).toBe(1);
+    });
+  });
+
+  describe('collab_session_update', () => {
+    it('should update heartbeat, current task, todos, and progress', async () => {
+      const session = await createSession(db, {
+        project_root: '/test/project',
+        name: 'heartbeat-session',
+      });
+
+      const result = await handleSessionTool(db, 'collab_session_update', {
+        session_id: session.id,
+        current_task: 'Implementing heartbeat',
+        todos: [
+          { content: 'Add schema', status: 'completed' },
+          { content: 'Add tests', status: 'in_progress' },
+        ],
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.success).toBe(true);
+      expect(response.current_task).toBe('Implementing heartbeat');
+      expect(response.progress).toEqual({ completed: 1, total: 2, percentage: 50 });
+
+      const stored = await getSession(db, session.id);
+      expect(stored?.current_task).toBe('Implementing heartbeat');
+      expect(JSON.parse(stored?.progress ?? '{}')).toEqual({ completed: 1, total: 2, percentage: 50 });
+    });
+
+    it('should return error for inactive session', async () => {
+      const result = await handleSessionTool(db, 'collab_session_update', {
+        session_id: 'missing-session',
+        current_task: 'No-op',
+      });
+
+      expect(result.isError).toBe(true);
+      const response = JSON.parse(result.content[0].text);
+      expect(response.error).toBe('SESSION_NOT_FOUND');
+    });
   });
 
   describe('collab_config', () => {
@@ -156,6 +275,52 @@ describe('Session Tools', () => {
       expect(response.session.id).toBe(sessionId);
       expect(response.claims).toHaveLength(1);
       expect(response.message).toContain('1 claim(s)');
+    });
+
+    it('should return pending coordination details for the current session', async () => {
+      const owner = await createSession(db, {
+        project_root: '/test/project',
+        name: 'owner-session',
+      });
+
+      const ownerClaim = await createClaim(db, {
+        session_id: owner.id,
+        files: ['src/shared.ts'],
+        intent: 'Owner work',
+        scope: 'small',
+      });
+
+      await joinQueue(db, {
+        claim_id: ownerClaim.claim.id,
+        session_id: sessionId,
+        intent: 'Waiting work',
+        priority: 75,
+        scope: 'small',
+      });
+
+      const waiterStatus = await handleSessionTool(db, 'collab_status', {
+        session_id: sessionId,
+      });
+      const ownerStatus = await handleSessionTool(db, 'collab_status', {
+        session_id: owner.id,
+      });
+
+      expect(waiterStatus.isError).toBeFalsy();
+      expect(ownerStatus.isError).toBeFalsy();
+      const waiterResponse = JSON.parse(waiterStatus.content[0].text);
+      const ownerResponse = JSON.parse(ownerStatus.content[0].text);
+
+      expect(waiterResponse.pending_coordination.outgoing).toBe(1);
+      expect(waiterResponse.coordination_requests.outgoing[0]).toMatchObject({
+        owner_session_id: owner.id,
+        owner_session_name: 'owner-session',
+        files: ['src/shared.ts'],
+      });
+      expect(ownerResponse.pending_coordination.incoming).toBe(1);
+      expect(ownerResponse.coordination_requests.incoming[0]).toMatchObject({
+        requested_by_session_id: sessionId,
+        owner_claim_id: ownerClaim.claim.id,
+      });
     });
 
     it('should return error for missing session_id', async () => {

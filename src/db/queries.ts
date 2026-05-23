@@ -8,6 +8,11 @@ import type {
   ClaimScope,
   ClaimWithFiles,
   ConflictInfo,
+  Notification,
+  NotificationMetadata,
+  NotificationType,
+  QueueEntry,
+  QueueEntryWithDetails,
   TodoItem,
   SessionProgress,
   SessionConfig,
@@ -18,8 +23,10 @@ import type {
   AuditHistoryWithSession,
   AuditMetadata,
   MemoryCategory,
-  } from './types';
-import type { WorkingMemory, WorkingMemoryInput } from './types';
+  WorkingMemory,
+  WorkingMemoryInput,
+} from './types.js';
+import { SCOPE_WAIT_MINUTES } from './types.js';
 import { generateId } from '../utils/crypto.js';
 
 // ============ Session Queries ============
@@ -812,6 +819,231 @@ export async function removeSessionFromAllQueues(
     .run();
 
   return result.meta.changes;
+}
+
+export async function getNextQueuePosition(
+  db: DatabaseAdapter,
+  claimId: string
+): Promise<number> {
+  const result = await db
+    .prepare('SELECT MAX(position) as max_pos FROM claim_queue WHERE claim_id = ?')
+    .bind(claimId)
+    .first<{ max_pos: number | null }>();
+
+  return (result?.max_pos ?? 0) + 1;
+}
+
+export async function calculateEstimatedWait(
+  db: DatabaseAdapter,
+  claimId: string,
+  position: number
+): Promise<number> {
+  const result = await db
+    .prepare(
+      `SELECT scope FROM claim_queue
+       WHERE claim_id = ? AND position < ?
+       ORDER BY priority DESC, position ASC`
+    )
+    .bind(claimId, position)
+    .all<{ scope: ClaimScope }>();
+
+  let totalMinutes = 0;
+  for (const entry of result.results) {
+    totalMinutes += SCOPE_WAIT_MINUTES[entry.scope] ?? SCOPE_WAIT_MINUTES.medium;
+  }
+
+  const claim = await getClaim(db, claimId);
+  if (claim) {
+    totalMinutes += Math.round(SCOPE_WAIT_MINUTES[claim.scope] / 2);
+  }
+
+  return totalMinutes;
+}
+
+export async function joinQueue(
+  db: DatabaseAdapter,
+  params: {
+    claim_id: string;
+    session_id: string;
+    intent: string;
+    priority?: number;
+    scope?: ClaimScope;
+  }
+): Promise<QueueEntry> {
+  const existing = await db
+    .prepare('SELECT * FROM claim_queue WHERE claim_id = ? AND session_id = ?')
+    .bind(params.claim_id, params.session_id)
+    .first<QueueEntry>();
+
+  if (existing) {
+    return existing;
+  }
+
+  const id = generateId();
+  const now = new Date().toISOString();
+  const priority = params.priority ?? 50;
+  const scope = params.scope ?? 'medium';
+  const position = await getNextQueuePosition(db, params.claim_id);
+  const estimatedWait = await calculateEstimatedWait(db, params.claim_id, position);
+
+  await db
+    .prepare(
+      `INSERT INTO claim_queue (id, claim_id, session_id, intent, position, priority, scope, estimated_wait_minutes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(id, params.claim_id, params.session_id, params.intent, position, priority, scope, estimatedWait, now)
+    .run();
+
+  return {
+    id,
+    claim_id: params.claim_id,
+    session_id: params.session_id,
+    intent: params.intent,
+    position,
+    priority,
+    scope,
+    estimated_wait_minutes: estimatedWait,
+    created_at: now,
+  };
+}
+
+export async function listQueue(
+  db: DatabaseAdapter,
+  params: {
+    claim_id?: string;
+    session_id?: string;
+    owner_session_id?: string;
+  } = {}
+): Promise<QueueEntryWithDetails[]> {
+  let query = `
+    SELECT
+      q.*,
+      s.name as session_name,
+      c.session_id as owner_session_id,
+      c.intent as claim_intent,
+      cs.name as claim_session_name,
+      GROUP_CONCAT(cf.file_path, '|||') as claim_files_concat
+    FROM claim_queue q
+    JOIN sessions s ON q.session_id = s.id
+    JOIN claims c ON q.claim_id = c.id
+    JOIN sessions cs ON c.session_id = cs.id
+    LEFT JOIN claim_files cf ON c.id = cf.claim_id
+    WHERE c.status = 'active'
+      AND s.status = 'active'
+      AND cs.status = 'active'
+  `;
+  const bindings: string[] = [];
+
+  if (params.claim_id) {
+    query += ' AND q.claim_id = ?';
+    bindings.push(params.claim_id);
+  }
+
+  if (params.session_id) {
+    query += ' AND q.session_id = ?';
+    bindings.push(params.session_id);
+  }
+
+  if (params.owner_session_id) {
+    query += ' AND c.session_id = ?';
+    bindings.push(params.owner_session_id);
+  }
+
+  query += ' GROUP BY q.id ORDER BY q.priority DESC, q.position ASC';
+
+  const result = await db
+    .prepare(query)
+    .bind(...bindings)
+    .all<QueueEntry & {
+      session_name: string | null;
+      owner_session_id: string;
+      claim_intent: string;
+      claim_session_name: string | null;
+      claim_files_concat: string | null;
+    }>();
+
+  return result.results.map((entry) => ({
+    ...entry,
+    claim_files: entry.claim_files_concat ? entry.claim_files_concat.split('|||') : [],
+  }));
+}
+
+export async function createNotification(
+  db: DatabaseAdapter,
+  params: {
+    session_id: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+    reference_type?: string;
+    reference_id?: string;
+    metadata?: NotificationMetadata;
+  }
+): Promise<Notification> {
+  const id = generateId();
+  const now = new Date().toISOString();
+  const metadataJson = params.metadata ? JSON.stringify(params.metadata) : null;
+
+  await db
+    .prepare(
+      `INSERT INTO notifications (id, session_id, type, title, message, reference_type, reference_id, metadata, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      id,
+      params.session_id,
+      params.type,
+      params.title,
+      params.message,
+      params.reference_type ?? null,
+      params.reference_id ?? null,
+      metadataJson,
+      now
+    )
+    .run();
+
+  return {
+    id,
+    session_id: params.session_id,
+    type: params.type,
+    title: params.title,
+    message: params.message,
+    reference_type: params.reference_type ?? null,
+    reference_id: params.reference_id ?? null,
+    metadata: metadataJson,
+    read_at: null,
+    created_at: now,
+  };
+}
+
+export async function notifyQueueOnClaimRelease(
+  db: DatabaseAdapter,
+  claimId: string,
+  releasedBy: string,
+  files: string[]
+): Promise<number> {
+  const queuedSessions = await listQueue(db, { claim_id: claimId });
+  let notified = 0;
+
+  for (const entry of queuedSessions) {
+    await createNotification(db, {
+      session_id: entry.session_id,
+      type: 'queue_ready',
+      title: 'Claim released',
+      message: `The claim for ${files.join(', ')} has been released. You can claim these files now.`,
+      reference_type: 'claim',
+      reference_id: claimId,
+      metadata: {
+        claim_id: claimId,
+        files,
+        released_by: releasedBy,
+        queue_position: entry.position,
+      },
+    });
+    notified++;
+  }
+
+  return notified;
 }
 
 // ============ Audit History Queries ============

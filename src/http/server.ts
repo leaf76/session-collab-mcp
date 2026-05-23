@@ -370,6 +370,13 @@ export function createHttpServer(db: DatabaseAdapter, options: HttpServerOptions
         return;
       }
 
+      if (method === 'POST' && url.pathname === '/v1/sessions/update') {
+        const body = (await readJsonBody(req)) as Record<string, unknown> | undefined;
+        const response = await handleRestTool(db, 'collab_session_update', body ?? {}, traceId);
+        sendJson(res, response.ok ? 200 : 400, response as unknown as JsonValue, traceId);
+        return;
+      }
+
       if (method === 'GET' && url.pathname === '/v1/sessions') {
         const response = await handleRestTool(db, 'collab_session_list', parseQueryParams(url), traceId);
         sendJson(res, response.ok ? 200 : 400, response as unknown as JsonValue, traceId);

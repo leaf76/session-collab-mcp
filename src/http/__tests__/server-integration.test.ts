@@ -51,6 +51,36 @@ describe.runIf(shouldRun)('HTTP Server Integration', () => {
     expect(body.data.session_id).toBeDefined();
   });
 
+  it('should update session progress via HTTP', async () => {
+    const startRes = await fetch(`${baseUrl}/v1/sessions/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_root: '/test', name: 'http-update-session' }),
+    });
+    const startBody = await startRes.json();
+    const sessionId = startBody.data.session_id;
+
+    const updateRes = await fetch(`${baseUrl}/v1/sessions/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: sessionId,
+        current_task: 'Checking HTTP update endpoint',
+        todos: [
+          { content: 'Start session', status: 'completed' },
+          { content: 'Update session', status: 'completed' },
+          { content: 'Verify response', status: 'in_progress' },
+        ],
+      }),
+    });
+
+    expect(updateRes.status).toBe(200);
+    const updateBody = await updateRes.json();
+    expect(updateBody.ok).toBe(true);
+    expect(updateBody.data.current_task).toBe('Checking HTTP update endpoint');
+    expect(updateBody.data.progress).toEqual({ completed: 2, total: 3, percentage: 67 });
+  });
+
   it('should return trace_id on invalid input', async () => {
     const res = await fetch(`${baseUrl}/v1/tools/call`, {
       method: 'POST',

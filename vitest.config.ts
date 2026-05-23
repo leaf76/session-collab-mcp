@@ -13,8 +13,6 @@ export default defineConfig({
         'src/**/*.test.ts',
         'src/cli.ts',
         'src/constants.ts',
-        'src/auth/**',      // Auth module - no tests yet
-        'src/tokens/**',    // Token module - no tests yet
       ],
     },
     testTimeout: 10000,

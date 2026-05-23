@@ -59,9 +59,9 @@ Display any relevant memories to establish context continuity.
 If needed, call `mcp__session-collab__collab_config` with:
 - `session_id`: Your session ID
 - `mode`: One of:
-  - `"strict"`: Always ask user before proceeding with conflicts
-  - `"smart"` (default): Auto-proceed with safe content, ask for blocked
-  - `"bypass"`: Warn only, don't block
+  - `"strict"`: Block conflicting claims until coordination happens
+  - `"smart"` (default): Claim safe files or symbols, queue blocked files, and show coordination requests
+  - `"bypass"`: Allow overlapping claims only with `allow_conflicts=true`
 
 ## Output Format
 
@@ -91,6 +91,9 @@ Display relevant findings, decisions, or important notes from working memory.
 ### Reminders
 - Always call `collab_claim` with `action="check"` before editing files
 - Use `collab_claim` with `action="create"` to reserve files before modification
+- In smart mode, narrow same-file work to `symbols` when possible
+- If `blocked_files` or `waiting_for_coordination` is returned, do not edit those files until coordination is resolved
+- Use `collab_status` or `collab_session_list` to see incoming and outgoing coordination requests
 - Use `collab_memory_save` to persist important findings or decisions
 - Call `collab_claim` with `action="release"` when done with files
 - Call `collab_session_end` when conversation ends

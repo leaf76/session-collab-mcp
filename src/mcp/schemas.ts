@@ -85,6 +85,7 @@ export const claimCreateSchema = z.object({
   intent: z.string().min(1, 'intent is required'),
   scope: claimScopeSchema.optional(),
   priority: z.number().min(0).max(100).optional(),
+  allow_conflicts: z.boolean().optional(),
 }).refine(
   (data) => (data.files && data.files.length > 0) || (data.symbols && data.symbols.length > 0),
   { message: 'Either files or symbols must be provided' }

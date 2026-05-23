@@ -24,12 +24,13 @@ export const SERVER_INSTRUCTIONS = `
 
 Coordinate sessions and persist context across conversations.
 
-## 10 Core Tools
+## Core Tools
 
-### Session (5 tools)
+### Session
 - \`collab_session_start\`: Start session with project_root
 - \`collab_session_end\`: End session, release claims
-- \`collab_session_list\`: List active sessions
+- \`collab_session_list\`: List active sessions and their active claim summaries
+- \`collab_session_update\`: Update heartbeat, current task, todos, and progress
 - \`collab_config\`: Configure session behavior
 - \`collab_status\`: Get session status and summary
 
@@ -50,10 +51,19 @@ Coordinate sessions and persist context across conversations.
 
 1. **On start**: \`collab_session_start\` with project_root
 2. **Before editing**: \`collab_claim\` action="check"
-3. **For changes**: \`collab_claim\` action="create"
+3. **For changes**: \`collab_claim\` action="create" (smart mode claims safe files and queues blocked files)
 4. **Save context**: \`collab_memory_save\` for important findings
-5. **When done**: \`collab_claim\` action="release"
-6. **On end**: \`collab_session_end\`
+5. **While working**: \`collab_session_update\` with current_task/todos
+6. **When done**: \`collab_claim\` action="release"
+7. **On end**: \`collab_session_end\`
+
+## Conflict Handling
+
+- \`strict\`: conflicting claims are blocked; coordinate before editing.
+- \`smart\` (default): same-file work can proceed when symbol claims do not overlap; mixed requests claim safe files and create coordination requests for blocked files.
+- \`bypass\`: overlapping claims require explicit \`allow_conflicts=true\` and return a warning.
+- If a file is blocked, narrow the claim to specific symbols before retrying. Do not overwrite, revert, or delete another active session's work.
+- Check \`collab_status\` or \`collab_session_list\` for pending coordination requests.
 
 ## Memory Categories
 

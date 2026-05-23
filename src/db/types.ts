@@ -4,7 +4,6 @@ export type SessionStatus = 'active' | 'inactive' | 'terminated';
 export type ClaimStatus = 'active' | 'completed' | 'abandoned';
 export type ClaimScope = 'small' | 'medium' | 'large';
 export type DecisionCategory = 'architecture' | 'naming' | 'api' | 'database' | 'ui' | 'other';
-export type UserStatus = 'active' | 'suspended' | 'deleted';
 
 // Audit history types
 export type AuditAction =
@@ -77,59 +76,6 @@ export function getPriorityLevel(priority: number): PriorityInfo {
   if (priority >= 70) return { value: priority, level: 'high', label: 'High (70-89)' };
   if (priority >= 40) return { value: priority, level: 'normal', label: 'Normal (40-69)' };
   return { value: priority, level: 'low', label: 'Low (0-39)' };
-}
-
-// User and authentication types
-export interface User {
-  id: string;
-  email: string;
-  password_hash: string;
-  display_name: string | null;
-  created_at: string;
-  updated_at: string;
-  last_login_at: string | null;
-  status: UserStatus;
-}
-
-export interface UserPublic {
-  id: string;
-  email: string;
-  display_name: string | null;
-  created_at: string;
-}
-
-export interface ApiToken {
-  id: string;
-  user_id: string;
-  name: string;
-  token_hash: string;
-  token_prefix: string;
-  scopes: string; // JSON array string
-  last_used_at: string | null;
-  expires_at: string | null;
-  created_at: string;
-  revoked_at: string | null;
-}
-
-export interface ApiTokenPublic {
-  id: string;
-  name: string;
-  token_prefix: string;
-  scopes: string[];
-  last_used_at: string | null;
-  expires_at: string | null;
-  created_at: string;
-}
-
-export interface RefreshToken {
-  id: string;
-  user_id: string;
-  token_hash: string;
-  expires_at: string;
-  created_at: string;
-  revoked_at: string | null;
-  user_agent: string | null;
-  ip_address: string | null;
 }
 
 export interface TodoItem {
@@ -304,6 +250,7 @@ export interface QueueEntry {
 export interface QueueEntryWithDetails extends QueueEntry {
   session_name: string | null;
   claim_files: string[];
+  owner_session_id: string;
   claim_session_name: string | null;
   claim_intent: string;
 }

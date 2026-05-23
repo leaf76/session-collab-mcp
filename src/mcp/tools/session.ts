@@ -1,4 +1,4 @@
-// Session management tools - Simplified to 5 core tools
+// Session management tools
 
 import type { DatabaseAdapter } from '../../db/sqlite-adapter.js';
 import type { McpTool, McpToolResult } from '../protocol.js';
@@ -7,10 +7,12 @@ import {
   createSession,
   listSessions,
   updateSessionConfig,
+  updateSessionHeartbeat,
   endSession,
   cleanupStaleSessions,
   cleanupStaleClaims,
   listClaims,
+  listQueue,
   logAuditEvent,
   removeSessionFromAllQueues,
   getActiveMemories,
@@ -18,7 +20,7 @@ import {
   saveMemory,
   getSession,
 } from '../../db/queries.js';
-import type { SessionConfig } from '../../db/types.js';
+import type { QueueEntryWithDetails, SessionConfig } from '../../db/types.js';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
 import {
   validateInput,
@@ -26,6 +28,7 @@ import {
   sessionEndSchema,
   sessionListSchema,
   configSchema,
+  statusUpdateSchema,
   statusSchema,
 } from '../schemas.js';
 import {
@@ -36,6 +39,47 @@ import {
   validateSessionExists,
   ERROR_CODES,
 } from '../../utils/response.js';
+import { getPriorityLevel } from '../../db/types.js';
+
+function parseJsonField<T>(value: string | null): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
+function formatIncomingCoordination(entry: QueueEntryWithDetails): Record<string, unknown> {
+  return {
+    queue_id: entry.id,
+    owner_claim_id: entry.claim_id,
+    requested_by_session_id: entry.session_id,
+    requested_by_session_name: entry.session_name,
+    intent: entry.intent,
+    files: entry.claim_files,
+    priority: getPriorityLevel(entry.priority),
+    position: entry.position,
+    estimated_wait_minutes: entry.estimated_wait_minutes,
+    created_at: entry.created_at,
+  };
+}
+
+function formatOutgoingCoordination(entry: QueueEntryWithDetails): Record<string, unknown> {
+  return {
+    queue_id: entry.id,
+    owner_claim_id: entry.claim_id,
+    owner_session_id: entry.owner_session_id,
+    owner_session_name: entry.claim_session_name,
+    owner_intent: entry.claim_intent,
+    intent: entry.intent,
+    files: entry.claim_files,
+    priority: getPriorityLevel(entry.priority),
+    position: entry.position,
+    estimated_wait_minutes: entry.estimated_wait_minutes,
+    created_at: entry.created_at,
+  };
+}
 
 export const sessionTools: McpTool[] = [
   {
@@ -90,6 +134,39 @@ export const sessionTools: McpTool[] = [
           description: 'Filter by project root',
         },
       },
+    },
+  },
+  {
+    name: 'collab_session_update',
+    description: 'Update session heartbeat, current task, todos, and progress.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Session ID to update',
+        },
+        current_task: {
+          type: 'string',
+          description: 'Current work summary',
+        },
+        todos: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              content: { type: 'string' },
+              status: {
+                type: 'string',
+                enum: ['pending', 'in_progress', 'completed'],
+              },
+            },
+            required: ['content', 'status'],
+          },
+          description: 'Current todo state for progress reporting',
+        },
+      },
+      required: ['session_id'],
     },
   },
   {
@@ -265,11 +342,28 @@ export async function handleSessionTool(
       const sessionsWithClaims = await Promise.all(
         sessions.map(async (session) => {
           const claims = await listClaims(db, { session_id: session.id, status: 'active' });
+          const incomingCoordination = await listQueue(db, { owner_session_id: session.id });
+          const outgoingCoordination = await listQueue(db, { session_id: session.id });
           return {
             id: session.id,
             name: session.name,
             status: session.status,
+            current_task: session.current_task,
+            progress: parseJsonField(session.progress),
+            todos: parseJsonField(session.todos),
             active_claims: claims.length,
+            claims: claims.map(c => ({
+              id: c.id,
+              files: c.files,
+              intent: c.intent,
+              priority: getPriorityLevel(c.priority),
+              created_at: c.created_at,
+            })),
+            pending_coordination: {
+              incoming: incomingCoordination.length,
+              outgoing: outgoingCoordination.length,
+            },
+            coordination_requests: incomingCoordination.map(formatIncomingCoordination),
             last_heartbeat: session.last_heartbeat,
           };
         })
@@ -278,6 +372,39 @@ export async function handleSessionTool(
       return successResponse({
         sessions: sessionsWithClaims,
         total: sessionsWithClaims.length,
+      });
+    }
+
+    case 'collab_session_update': {
+      const validation = validateInput(statusUpdateSchema, args);
+      if (!validation.success) {
+        return validationError(validation.error);
+      }
+      const input = validation.data;
+
+      const sessionResult = await validateActiveSession(db, input.session_id);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
+      }
+
+      const updated = await updateSessionHeartbeat(db, input.session_id, {
+        current_task: input.current_task,
+        todos: input.todos,
+      });
+      if (!updated) {
+        return errorResponse(ERROR_CODES.SESSION_NOT_FOUND, 'Session not found');
+      }
+
+      const session = await getSession(db, input.session_id);
+
+      return successResponse({
+        success: true,
+        session_id: input.session_id,
+        current_task: session?.current_task ?? null,
+        progress: parseJsonField(session?.progress ?? null),
+        todos: parseJsonField(session?.todos ?? null),
+        last_heartbeat: session?.last_heartbeat ?? null,
+        message: 'Session updated.',
       });
     }
 
@@ -336,6 +463,8 @@ export async function handleSessionTool(
       const claims = await listClaims(db, { session_id: sessionId, status: 'active' });
       const memories = await getActiveMemories(db, sessionId, { priority_threshold: 70, max_items: 10 });
       const allSessions = await listSessions(db, { project_root: session.project_root });
+      const incomingCoordination = await listQueue(db, { owner_session_id: sessionId });
+      const outgoingCoordination = await listQueue(db, { session_id: sessionId });
 
       return successResponse({
         session: {
@@ -350,6 +479,14 @@ export async function handleSessionTool(
         })),
         active_memories: memories.length,
         other_sessions: allSessions.filter(s => s.id !== sessionId).length,
+        pending_coordination: {
+          incoming: incomingCoordination.length,
+          outgoing: outgoingCoordination.length,
+        },
+        coordination_requests: {
+          incoming: incomingCoordination.map(formatIncomingCoordination),
+          outgoing: outgoingCoordination.map(formatOutgoingCoordination),
+        },
         message: `Session active. ${claims.length} claim(s), ${memories.length} memories.`,
       });
     }

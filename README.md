@@ -64,6 +64,7 @@ session-collab-http --host 127.0.0.1 --port 8765
 # CLI wrapper (convenience REST client)
 session-collab health
 session-collab tools
+session-collab doctor
 session-collab call --name collab_session_start --args '{"project_root":"/repo","name":"demo"}'
 ```
 
@@ -101,9 +102,11 @@ The MCP tools give you a stable collaboration workflow across providers:
 
 1. Start a session with `collab_session_start`
 2. Check files with `collab_claim(action="check")`
-3. Reserve files with `collab_claim(action="create")`
-4. Save important context with `collab_memory_save`
-5. End the session with `collab_session_end`
+3. Reserve files with `collab_claim(action="create")`; smart mode claims safe files and queues blocked files for coordination
+4. Update visible progress with `collab_session_update`
+5. Save important context with `collab_memory_save`
+6. Release claims with `collab_claim(action="release")`
+7. End the session with `collab_session_end`
 
 ### Working Memory
 
@@ -130,9 +133,16 @@ Configure behavior with `collab_config`:
 
 | Mode | Behavior |
 |------|----------|
-| `strict` | Always ask user, never bypass |
-| `smart` (default) | Auto-proceed with safe content, ask for blocked |
-| `bypass` | Proceed despite conflicts (warn only) |
+| `strict` | Block conflicting claims and require user coordination before editing |
+| `smart` (default) | Claim non-conflicting files or symbols, queue blocked files, and expose coordination requests |
+| `bypass` | Allow overlapping claims only with `allow_conflicts=true`, and return a warning |
+
+In `smart` mode, prefer symbol-level claims when working inside a file that another session has claimed. Same-file work can proceed when claimed symbols do not overlap. If overlap cannot be proven safe, `collab_claim(action="create")` returns `waiting_for_coordination` or `partial_claim_created` with:
+
+- `claimed_files`: files reserved by the caller
+- `safe_files`: files that can be edited now
+- `blocked_files`: files that need coordination first
+- `coordination_requests`: queue entries visible through `collab_status` and `collab_session_list`
 
 ### Auto-Release Options
 
@@ -145,13 +155,14 @@ Configure behavior with `collab_config`:
 
 ## MCP Tools Reference
 
-### Session Management (5 tools)
+### Session Management
 
 | Tool | Purpose |
 |------|---------|
 | `collab_session_start` | Register a new session |
 | `collab_session_end` | End session and release all claims |
-| `collab_session_list` | List active sessions |
+| `collab_session_list` | List active sessions with current task and active claim summaries |
+| `collab_session_update` | Update heartbeat, current task, todos, and progress |
 | `collab_config` | Configure session behavior |
 | `collab_status` | Get session status summary |
 
@@ -159,7 +170,7 @@ Configure behavior with `collab_config`:
 
 | Tool | Actions |
 |------|---------|
-| `collab_claim` | `create`, `check`, `release`, `list` (check: `exclude_self` defaults to true) |
+| `collab_claim` | `create`, `check`, `release`, `list` (check: `exclude_self` defaults to true; create follows `collab_config(mode)`) |
 
 ### Working Memory (3 tools)
 
@@ -187,6 +198,7 @@ Configure behavior with `collab_config`:
 
 - `POST /v1/sessions/start` → `collab_session_start`
 - `POST /v1/sessions/end` → `collab_session_end`
+- `POST /v1/sessions/update` → `collab_session_update`
 - `GET /v1/sessions` → `collab_session_list`
 - `POST /v1/config` → `collab_config`
 - `GET /v1/status` → `collab_status`
@@ -217,10 +229,24 @@ Configure behavior with `collab_config`:
 # Session A starts working
 collab_session_start(project_root="/my/project", name="feature-auth")
 collab_claim(session_id="session-a", action="create", files=["src/auth.ts"], intent="Adding JWT support")
+collab_session_update(session_id="session-a", current_task="Adding JWT support")
 
 # Session B checks before editing
 collab_claim(session_id="session-b", action="check", files=["src/auth.ts"])
 # Result: "CONFLICT: src/auth.ts is claimed by 'feature-auth'"
+
+# create in smart mode queues blocked files instead of editing over the owner
+collab_claim(session_id="session-b", action="create", files=["src/auth.ts"], intent="Coordinated auth work")
+# Result: status="waiting_for_coordination", blocked_files=["src/auth.ts"]
+
+# If only a different symbol is needed, claim that symbol explicitly
+collab_claim(
+  session_id="session-b",
+  action="create",
+  symbols=[{ file="src/auth.ts", symbols=["refreshToken"], symbol_type="function" }],
+  intent="Update refresh token"
+)
+# Result: status="created" if no claimed symbol overlaps
 
 # If you want to include your own claims in the check
 collab_claim(session_id="session-a", action="check", files=["src/auth.ts"], exclude_self=false)
@@ -334,6 +360,8 @@ npm run start:dev    # Start in development mode
 npm run typecheck    # Run TypeScript type checking
 npm run lint         # Run ESLint
 npm run test         # Run tests with Vitest
+npm run test:http    # Run HTTP integration tests
+npm run test:release # Run release gate: typecheck, lint, tests, HTTP tests, npm pack dry-run
 ```
 
 ### HTTP Integration Tests
@@ -341,7 +369,15 @@ npm run test         # Run tests with Vitest
 HTTP integration tests require a local listen port. Enable them with:
 
 ```bash
-SESSION_COLLAB_HTTP_TESTS=true npx vitest run src/http/__tests__/server-integration.test.ts
+npm run test:http
+```
+
+### HTTP CLI Doctor
+
+When using the HTTP server, validate the running server with:
+
+```bash
+session-collab doctor --base-url http://127.0.0.1:8765
 ```
 
 ### Historical Notes
@@ -371,6 +407,15 @@ session-collab-mcp/
 ```
 
 ## Changelog
+
+### v2.3.0
+
+- Add `collab_session_update` for heartbeat, current task, todo, and progress reporting
+- Enrich `collab_session_list` with current task and active claim summaries
+- Make `collab_claim(action="create")` respect `collab_config(mode)` with smart coordination by default
+- Add `session-collab doctor` for HTTP server health and tool-surface checks
+- Add `npm run test:http` and `npm run test:release` release gates
+- Update dev test tooling to clear npm audit findings
 
 ### v2.1.0
 
