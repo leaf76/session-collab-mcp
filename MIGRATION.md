@@ -1,3 +1,35 @@
+# Migration Guide: Session Collaboration MCP
+
+## v2.5.0 — Paths, reuse, compact claims, memory caps
+
+| Area | Change |
+|------|--------|
+| Paths | Claim paths normalized to `project_root` (absolute ≡ relative). Outside-root / `..` rejected. |
+| Start | Reuses active session with same `project_root` + `name` by default (`reuse`, `force_new`). Stale idle default **15 min**. |
+| Claim | Prefer **create** (atomic). Happy-path responses compact (`file_count`); conflict paths keep `blocked_files` / compact conflicts. `detail=true` for full payloads. |
+| List/status | Summary uses SQL `COUNT` (no claim row loads). |
+| Memory | Content capped at **800** chars (truncate + flag). Active recall default **8** items (`max_items` up to 20). |
+| Roles | Collab memory = short in-flight notes; long-term prefs → AI-Memory vault. |
+| Local install | `npm run install:local` builds + syncs plugin skills into Claude cache when present. |
+
+Restart MCP hosts after upgrade.
+
+## v2.4.0 — Token-efficient defaults
+
+Behavioral defaults changed (opt-in for heavy payloads):
+
+| API | Before | After |
+|-----|--------|--------|
+| `collab_session_start` | Always restored up to 15 high-priority memories | `restore_context` defaults **false**; set `true` (+ optional `max_restore_items`, default 5) to restore |
+| `collab_session_list` | Always included full claims + coordination arrays | Summary/counts by default; `detail=true` for full payloads |
+| `collab_status` | Always included full claims + coordination | Counts by default; `detail=true` for full payloads |
+
+Agent policy (skills / AGENTS): start only for non-trivial / multi-session work; skip pure Q&A.
+
+`SERVER_INSTRUCTIONS` was shortened. Restart the MCP process after upgrade so hosts reload tools/instructions.
+
+---
+
 # Migration Guide: Session Collaboration MCP v2.0
 
 ## Breaking Changes

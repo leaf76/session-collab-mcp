@@ -39,12 +39,15 @@ Add to `~/.claude.json`:
 ## Quick Start
 
 ```
-1. collab_session_start    # Register session
-2. collab_memory_recall    # Restore saved context (active=true)
-3. ... work ...
-4. collab_memory_save      # Save important findings (pinned=true)
-5. collab_session_end      # Clean up
+# Only for non-trivial / multi-session work — skip pure Q&A
+1. collab_session_start    # reuses name+project; restore_context default false
+2. collab_claim create     # atomic; batch files (check optional)
+3. collab_memory_save      # short notes only, capped (optional)
+4. collab_session_end
 ```
+
+Token defaults: list/status/claim happy-path compact unless `detail=true`.
+Collab memory ≠ AI-Memory vault (durable prefs live in the vault).
 
 ## Core Tools (10)
 

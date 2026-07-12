@@ -16,11 +16,17 @@ import {
   validateActiveSession,
   ERROR_CODES,
 } from '../../utils/response.js';
+import { clampMemoryContent, resolveRecallMaxItems } from '../../utils/memory-content.js';
+import {
+  MAX_MEMORY_CONTENT_CHARS,
+  DEFAULT_RECALL_MAX_ITEMS,
+  MAX_RECALL_MAX_ITEMS,
+} from '../../constants.js';
 
 export const memoryTools: McpTool[] = [
   {
     name: 'collab_memory_save',
-    description: `Save or update context to working memory (upsert). Use to persist findings, decisions, or state that should survive context compaction.`,
+    description: `Save short working-memory notes (finding/decision/state). Content capped at ${MAX_MEMORY_CONTENT_CHARS} chars. Not a long-term vault — use AI-Memory for durable prefs.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -39,7 +45,7 @@ export const memoryTools: McpTool[] = [
         },
         content: {
           type: 'string',
-          description: 'The content to remember',
+          description: `Short content (max ${MAX_MEMORY_CONTENT_CHARS} chars; longer values are truncated)`,
         },
         priority: {
           type: 'number',
@@ -55,7 +61,7 @@ export const memoryTools: McpTool[] = [
   },
   {
     name: 'collab_memory_recall',
-    description: `Recall memories. Use active=true to get pinned + high priority memories for context restoration.`,
+    description: `Recall short working-memory notes. active=true returns pinned + high priority (default max ${DEFAULT_RECALL_MAX_ITEMS}).`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -65,7 +71,7 @@ export const memoryTools: McpTool[] = [
         },
         active: {
           type: 'boolean',
-          description: 'If true, return pinned + high priority memories only (default behavior for context restoration)',
+          description: 'If true, return pinned + high priority memories only',
         },
         category: {
           type: 'string',
@@ -75,6 +81,10 @@ export const memoryTools: McpTool[] = [
         key: {
           type: 'string',
           description: 'Get a specific memory by key',
+        },
+        max_items: {
+          type: 'number',
+          description: `Max items for active recall (default ${DEFAULT_RECALL_MAX_ITEMS}, max ${MAX_RECALL_MAX_ITEMS})`,
         },
       },
       required: ['session_id'],
@@ -130,16 +140,18 @@ export async function handleMemoryTool(
     case 'collab_memory_save': {
       const category = args.category as MemoryCategory;
       const key = args.key as string;
-      const content = args.content as string;
+      const rawContent = args.content as string;
 
-      if (!category || !key || !content) {
+      if (!category || !key || rawContent === undefined || rawContent === null) {
         return validationError('category, key, and content are required');
       }
+
+      const clamped = clampMemoryContent(String(rawContent));
 
       const memory = await saveMemory(db, sessionId, {
         category,
         key,
-        content,
+        content: clamped.content,
         priority: (args.priority as number) ?? 50,
         pinned: (args.pinned as boolean) ?? false,
       });
@@ -151,7 +163,11 @@ export async function handleMemoryTool(
         key: memory.key,
         priority: memory.priority,
         pinned: memory.pinned === 1,
-        message: `Memory saved: ${category}/${key}`,
+        truncated: clamped.truncated,
+        content_length: clamped.content.length,
+        message: clamped.truncated
+          ? `Memory saved (truncated to ${MAX_MEMORY_CONTENT_CHARS} chars): ${category}/${key}`
+          : `Memory saved: ${category}/${key}`,
       });
     }
 
@@ -159,12 +175,13 @@ export async function handleMemoryTool(
       const active = args.active as boolean | undefined;
       const category = args.category as MemoryCategory | undefined;
       const key = args.key as string | undefined;
+      const maxItems = resolveRecallMaxItems(args.max_items as number | undefined);
 
       // If active=true, use getActiveMemories for optimized recall
       if (active) {
         const memories = await getActiveMemories(db, sessionId, {
           priority_threshold: 70,
-          max_items: 20,
+          max_items: maxItems,
         });
 
         const formatted = memories.map((m) => ({
@@ -186,15 +203,17 @@ export async function handleMemoryTool(
 
         return successResponse({
           count: formatted.length,
+          max_items: maxItems,
           by_category: byCategory,
           message: `Active memories: ${formatted.length} items`,
         });
       }
 
-      // Regular recall
+      // Regular recall — still cap to avoid huge dumps
       const memories = await recallMemory(db, sessionId, { category, key });
+      const limited = key ? memories : memories.slice(0, maxItems);
 
-      const formatted = memories.map((m) => ({
+      const formatted = limited.map((m) => ({
         category: m.category,
         key: m.key,
         content: m.content,
@@ -204,6 +223,7 @@ export async function handleMemoryTool(
 
       return successResponse({
         count: formatted.length,
+        max_items: maxItems,
         memories: formatted,
       });
     }

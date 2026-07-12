@@ -19,64 +19,28 @@ export const VERSION = getVersion();
 
 export const SERVER_NAME = 'session-collab-mcp';
 
+/** Idle sessions without heartbeat become inactive after this many minutes. */
+export const DEFAULT_STALE_SESSION_MINUTES = 15;
+
+/** Max characters stored per working-memory content field. */
+export const MAX_MEMORY_CONTENT_CHARS = 800;
+
+/** Default max items for active memory recall. */
+export const DEFAULT_RECALL_MAX_ITEMS = 8;
+
+/** Hard cap for memory recall max_items. */
+export const MAX_RECALL_MAX_ITEMS = 20;
+
+/** Keep short: hosts also inject skill docs; long instructions burn tokens every session. */
 export const SERVER_INSTRUCTIONS = `
-# Session Collaboration MCP
+Session Collaboration: multi-agent file claims + short working memory.
 
-Coordinate sessions and persist context across conversations.
+When: non-trivial edits or parallel sessions on the same repo. Skip pure Q&A/chat.
 
-## Core Tools
-
-### Session
-- \`collab_session_start\`: Start session with project_root
-- \`collab_session_end\`: End session, release claims
-- \`collab_session_list\`: List active sessions and their active claim summaries
-- \`collab_session_update\`: Update heartbeat, current task, todos, and progress
-- \`collab_config\`: Configure session behavior
-- \`collab_status\`: Get session status and summary
-
-### Claims (1 tool)
-- \`collab_claim\`: Unified claim tool
-  - action: "create" | "check" | "release" | "list"
-
-### Memory (3 tools)
-- \`collab_memory_save\`: Save context (upsert)
-- \`collab_memory_recall\`: Recall context (use active=true for restoration)
-- \`collab_memory_clear\`: Clear memories
-
-### Protection (1 tool)
-- \`collab_protect\`: Unified protection tool
-  - action: "register" | "check" | "list"
-
-## Workflow
-
-1. **On start**: \`collab_session_start\` with project_root
-2. **Before editing**: \`collab_claim\` action="check"
-3. **For changes**: \`collab_claim\` action="create" (smart mode claims safe files and queues blocked files)
-4. **Save context**: \`collab_memory_save\` for important findings
-5. **While working**: \`collab_session_update\` with current_task/todos
-6. **When done**: \`collab_claim\` action="release"
-7. **On end**: \`collab_session_end\`
-
-## Conflict Handling
-
-- \`strict\`: conflicting claims are blocked; coordinate before editing.
-- \`smart\` (default): same-file work can proceed when symbol claims do not overlap; mixed requests claim safe files and create coordination requests for blocked files.
-- \`bypass\`: overlapping claims require explicit \`allow_conflicts=true\` and return a warning.
-- If a file is blocked, narrow the claim to specific symbols before retrying. Do not overwrite, revert, or delete another active session's work.
-- Check \`collab_status\` or \`collab_session_list\` for pending coordination requests.
-
-## Memory Categories
-
-- **finding**: Discovered facts, root causes
-- **decision**: Architectural choices
-- **state**: Current tracking info
-- **important**: Critical context
-- **context**: General context
-
-## Best Practices
-
-- Save important findings to memory as you discover them
-- Use active=true in recall to restore context
-- Register plans with collab_protect for protection
-- Check files before editing to avoid conflicts
+Workflow: start (reuses same name+project) → collab_claim create (atomic; check optional) → optional memory_save → release → end.
+- Paths are normalized to project_root (absolute/relative same file = same claim).
+- create is enough to claim; check is probe-only. Batch files in one create.
+- start: restore_context default false. list/status/claim responses: detail default false.
+- memory: short finding/decision only (content capped). Not a long-term vault — use AI-Memory for durable prefs.
+- Do not overwrite another session's claimed work.
 `.trim();

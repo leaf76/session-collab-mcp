@@ -26,8 +26,8 @@ If you are not using Claude Code, use the root project README instead and connec
 ## Quick Start
 
 ```
-1. collab_session_start    # Register session
-2. collab_memory_recall    # Restore saved context (active=true)
+1. collab_session_start    # Non-trivial only; reuses name+project; restore_context default false
+2. collab_claim create (batch) before edits — check optional
 3. ... work ...
 4. collab_memory_save      # Save important findings
 5. collab_session_end      # Clean up

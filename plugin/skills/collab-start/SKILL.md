@@ -1,99 +1,84 @@
 ---
 name: collab-start
-description: Initialize session collaboration for multi-session conflict prevention. Use this at the start of a conversation or when you need to register a new collaboration session.
+description: Initialize session collaboration for multi-session conflict prevention. Use for non-trivial edits or when parallel sessions may touch the same repo — not for pure Q&A/chat.
 allowed-tools: mcp__session-collab__*
 ---
 
 # Session Collaboration Startup
 
-Initialize session collaboration to prevent conflicts when multiple agent sessions work on the same codebase.
+Prevent file conflicts when multiple agent sessions work on the same codebase. **Token-conscious by default.**
 
-## Required Actions
+## Roles (do not mix)
 
-Execute these steps in order:
+| Store | Use for |
+|-------|---------|
+| **session-collab memory** | Short in-flight notes for *this* repo/session (finding/decision/state). Content capped. |
+| **AI-Memory vault** (`~/AI-Memory`) | Durable cross-provider prefs, profile, project decisions |
 
-### Step 1: Start Session
+Do **not** dump transcripts into collab memory.
 
-Call `mcp__session-collab__collab_session_start` with:
-- `project_root`: Current working directory
-- `name`: A descriptive name based on the task (e.g., "feature-auth", "bugfix-api")
+## When to run
 
-**Important:** Store the `session_id` from the response. You need it for all subsequent calls.
+**Do start** when any of:
+- You will edit files in a shared project
+- Multiple agents/sessions may work on the same repo
+- User asks to coordinate, claim files, or resume collab context
 
-### Step 2: Review Active Sessions
+**Skip entirely** for pure Q&A, explanations, planning with no edits, greetings.
 
-Check the response for:
-- Number of active sessions
-- Other session names
-- Restored context from previous sessions
+## Required Actions (when starting)
 
-If other sessions are active, inform the user about potential collaboration.
+### Step 1: Start (or reuse) Session
 
-### Step 3: Check Existing Claims
+Call `collab_session_start` with:
+- `project_root`: repo you will edit
+- `name`: stable descriptive name (enables **reuse** of same name+project)
+- `restore_context`: **false by default** — set true only for prior highlights
+- `force_new`: true only if you must not reuse
 
-Call `mcp__session-collab__collab_claim` with:
-- `action`: `"list"`
-- `session_id`: Your session ID
+Store `session_id`. Note `reused` in the response.
 
-If there are active claims:
-- List which files or symbols are claimed
-- Show which session holds each claim
-- Display the stated intent
+### Step 2: Light awareness
 
-### Step 4: Load Working Memory (Recommended)
+From start response only (`active_sessions`).  
+If `active_sessions > 1` and you need who holds files: `collab_session_list` **without** `detail` first.
 
-Call `mcp__session-collab__collab_memory_recall` with:
-- `session_id`: Your session ID
-- `active`: `true`
+### Step 3: Claims — prefer atomic **create**
 
-This retrieves important context from previous work:
-- **Findings**: Discovered facts, root causes
-- **Decisions**: Architectural choices made
-- **State**: Current status, files being worked on
-- **Important**: Critical information that must not be lost
+Before modifying files:
+1. **`collab_claim` `action=create`** with **all target files in one call** (paths absolute or relative — server normalizes to project_root)
+2. If blocked: do **not** edit `blocked_files`; coordinate or wait
+3. `action=check` is **optional probe-only** — do not double-trip check→create by default
 
-Display any relevant memories to establish context continuity.
+Batch files. Prefer symbols when sharing a file safely.
 
-### Step 5: Configure Mode (Optional)
+### Step 4: Memory (optional)
 
-If needed, call `mcp__session-collab__collab_config` with:
-- `session_id`: Your session ID
-- `mode`: One of:
-  - `"strict"`: Block conflicting claims until coordination happens
-  - `"smart"` (default): Claim safe files or symbols, queue blocked files, and show coordination requests
-  - `"bypass"`: Allow overlapping claims only with `allow_conflicts=true`
+- Short finding/decision only
+- Skip for trivial sessions
 
-## Output Format
+### Step 5: Config (optional)
 
-Provide a summary in the user's language:
+`collab_config` only if non-default mode needed (`strict` / `smart` / `bypass`).
 
-### Session Collaboration Initialized
+## While working
+
+| Action | Guidance |
+|--------|----------|
+| Heartbeat | `collab_session_update` on milestones only |
+| Status / list | default summary; `detail=true` only for conflicts |
+| Release | when a unit of work finishes |
+| End | `collab_session_end` if you started a session |
+
+## Output (keep short)
 
 | Item | Value |
 |------|-------|
-| Session ID | `xxx-xxx-xxx` |
-| Session Name | `your-session-name` |
-| Project Path | `/path/to/project` |
-| Active Sessions | N |
-| Active Claims | M |
-| Working Memories | K |
-
-### Other Active Sessions (if any)
-- `session-name-1` (last active: X minutes ago)
-- `session-name-2` (last active: Y minutes ago)
-
-### Active Claims (if any)
-- `file.ts` - claimed by `other-session` for "intent description"
-
-### Previous Context (if any memories found)
-Display relevant findings, decisions, or important notes from working memory.
+| Session ID | `xxx` |
+| Reused | yes/no |
+| Active sessions | N |
 
 ### Reminders
-- Always call `collab_claim` with `action="check"` before editing files
-- Use `collab_claim` with `action="create"` to reserve files before modification
-- In smart mode, narrow same-file work to `symbols` when possible
-- If `blocked_files` or `waiting_for_coordination` is returned, do not edit those files until coordination is resolved
-- Use `collab_status` or `collab_session_list` to see incoming and outgoing coordination requests
-- Use `collab_memory_save` to persist important findings or decisions
-- Call `collab_claim` with `action="release"` when done with files
-- Call `collab_session_end` when conversation ends
+- create is enough to claim; check is optional
+- Paths are normalized — same file won't miss conflicts via abs/rel mismatch
+- If blocked, stop and do not overwrite the other session's work

@@ -67,6 +67,132 @@ export async function createSession(
   };
 }
 
+/**
+ * Find an active session that can be reused (same project_root + name, optional machine/user).
+ * Avoids zombie sessions when the same agent restarts with the same name.
+ */
+export async function findReusableSession(
+  db: DatabaseAdapter,
+  params: {
+    project_root: string;
+    name?: string;
+    machine_id?: string;
+    user_id?: string;
+  }
+): Promise<Session | null> {
+  if (!params.name) {
+    return null;
+  }
+
+  let query = `
+    SELECT * FROM sessions
+    WHERE status = 'active'
+      AND project_root = ?
+      AND name = ?
+  `;
+  const bindings: string[] = [params.project_root, params.name];
+
+  if (params.machine_id) {
+    query += ' AND (machine_id = ? OR machine_id IS NULL)';
+    bindings.push(params.machine_id);
+  }
+
+  if (params.user_id) {
+    query += ' AND (user_id = ? OR user_id IS NULL)';
+    bindings.push(params.user_id);
+  }
+
+  query += ' ORDER BY last_heartbeat DESC LIMIT 1';
+
+  const result = await db.prepare(query).bind(...bindings).first<Session>();
+  return result ?? null;
+}
+
+/** Lightweight session rows with claim/coordination counts (no claim payloads). */
+export type SessionSummaryRow = Session & {
+  active_claims: number;
+  incoming_coordination: number;
+  outgoing_coordination: number;
+};
+
+export async function listSessionSummaries(
+  db: DatabaseAdapter,
+  params: {
+    include_inactive?: boolean;
+    project_root?: string;
+    user_id?: string;
+  } = {}
+): Promise<SessionSummaryRow[]> {
+  let query = `
+    SELECT
+      s.*,
+      (SELECT COUNT(*) FROM claims c
+        WHERE c.session_id = s.id AND c.status = 'active') AS active_claims,
+      (SELECT COUNT(*) FROM claim_queue q
+        JOIN claims c ON q.claim_id = c.id
+        WHERE c.session_id = s.id AND c.status = 'active') AS incoming_coordination,
+      (SELECT COUNT(*) FROM claim_queue q
+        WHERE q.session_id = s.id) AS outgoing_coordination
+    FROM sessions s
+    WHERE 1=1
+  `;
+  const bindings: (string | number)[] = [];
+
+  if (!params.include_inactive) {
+    query += " AND s.status = 'active'";
+  }
+
+  if (params.project_root) {
+    query += ' AND s.project_root = ?';
+    bindings.push(params.project_root);
+  }
+
+  if (params.user_id) {
+    query += ' AND s.user_id = ?';
+    bindings.push(params.user_id);
+  }
+
+  query += ' ORDER BY s.last_heartbeat DESC';
+
+  const result = await db.prepare(query).bind(...bindings).all<SessionSummaryRow>();
+  return (result.results ?? []).map((row) => ({
+    ...row,
+    active_claims: Number(row.active_claims) || 0,
+    incoming_coordination: Number(row.incoming_coordination) || 0,
+    outgoing_coordination: Number(row.outgoing_coordination) || 0,
+  }));
+}
+
+export async function countActiveClaims(db: DatabaseAdapter, sessionId: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT COUNT(*) as cnt FROM claims WHERE session_id = ? AND status = 'active'")
+    .bind(sessionId)
+    .first<{ cnt: number }>();
+  return Number(row?.cnt) || 0;
+}
+
+export async function countCoordination(
+  db: DatabaseAdapter,
+  sessionId: string
+): Promise<{ incoming: number; outgoing: number }> {
+  const incoming = await db
+    .prepare(
+      `SELECT COUNT(*) as cnt FROM claim_queue q
+       JOIN claims c ON q.claim_id = c.id
+       WHERE c.session_id = ? AND c.status = 'active'`
+    )
+    .bind(sessionId)
+    .first<{ cnt: number }>();
+  const outgoing = await db
+    .prepare('SELECT COUNT(*) as cnt FROM claim_queue WHERE session_id = ?')
+    .bind(sessionId)
+    .first<{ cnt: number }>();
+  return {
+    incoming: Number(incoming?.cnt) || 0,
+    outgoing: Number(outgoing?.cnt) || 0,
+  };
+}
+
 export async function getSession(db: DatabaseAdapter, id: string): Promise<Session | null> {
   const result = await db.prepare('SELECT * FROM sessions WHERE id = ?').bind(id).first<Session>();
   return result ?? null;

@@ -28,7 +28,7 @@ describe('Claim Tools', () => {
     });
 
     describe('action: create', () => {
-      it('should create a claim successfully', async () => {
+      it('should create a claim successfully with compact response', async () => {
         const result = await handleClaimTool(db, 'collab_claim', {
           action: 'create',
           session_id: sessionId,
@@ -40,6 +40,38 @@ describe('Claim Tools', () => {
         const response = JSON.parse(result.content[0].text);
         expect(response.success).toBe(true);
         expect(response.claim_id).toBeDefined();
+        expect(response.file_count).toBe(1);
+        expect(response.files).toBeUndefined();
+        expect(response.claimed_files).toBeUndefined();
+      });
+
+      it('should normalize absolute paths to project-relative claims', async () => {
+        await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: sessionId,
+          files: ['/test/project/src/same.ts'],
+          intent: 'Absolute path claim',
+        });
+
+        const other = await createSession(db, {
+          project_root: '/test/project',
+          name: 'other',
+        });
+        await handleSessionTool(db, 'collab_config', {
+          session_id: other.id,
+          mode: 'strict',
+        });
+
+        const conflict = await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: other.id,
+          files: ['src/same.ts'],
+          intent: 'Relative path claim',
+        });
+        const response = JSON.parse(conflict.content[0].text);
+        expect(response.success).toBe(false);
+        expect(response.status).toBe('blocked_by_conflicts');
+        expect(response.blocked_files).toEqual(['src/same.ts']);
       });
 
       it('should block claim creation in strict mode when another active session has a conflict', async () => {
@@ -121,7 +153,6 @@ describe('Claim Tools', () => {
           session_name: 'owner-session',
           file: 'src/auth.ts',
           symbol_name: 'validateToken',
-          current_task: 'Editing validateToken',
         });
         expect(response.coordination_requests).toHaveLength(1);
         expect(response.coordination_requests[0]).toMatchObject({
@@ -129,6 +160,17 @@ describe('Claim Tools', () => {
           requested_by_session_id: sessionId,
           files: ['src/auth.ts'],
         });
+
+        // detail=true includes owner current_task
+        const detailed = await handleClaimTool(db, 'collab_claim', {
+          action: 'create',
+          session_id: sessionId,
+          symbols: [{ file: 'src/auth.ts', symbols: ['validateToken'], symbol_type: 'function' }],
+          intent: 'Refactor token validation again',
+          detail: true,
+        });
+        const detailedResponse = JSON.parse(detailed.content[0].text);
+        expect(detailedResponse.conflicts[0].current_task).toBe('Editing validateToken');
       });
 
       it('should create a symbol claim in smart mode when symbols do not overlap', async () => {
@@ -150,6 +192,7 @@ describe('Claim Tools', () => {
           session_id: sessionId,
           symbols: [{ file: 'src/auth.ts', symbols: ['refreshToken'], symbol_type: 'function' }],
           intent: 'Update refresh token',
+          detail: true,
         });
 
         expect(result.isError).toBeFalsy();
@@ -157,6 +200,7 @@ describe('Claim Tools', () => {
         expect(response.success).toBe(true);
         expect(response.status).toBe('created');
         expect(response.claim_id).toBeDefined();
+        expect(response.file_count).toBe(1);
         expect(response.claimed_files).toEqual(['src/auth.ts']);
         expect(response.blocked_files).toEqual([]);
       });

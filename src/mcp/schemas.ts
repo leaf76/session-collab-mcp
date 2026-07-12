@@ -30,6 +30,17 @@ export const sessionStartSchema = z.object({
   project_root: z.string().min(1, 'project_root is required'),
   name: z.string().optional(),
   machine_id: z.string().optional(),
+  /** When true, include high-priority memories from active sessions (token cost). Default false. */
+  restore_context: z.boolean().optional().default(false),
+  /** Cap restored memories when restore_context is true. Default 5, max 15. */
+  max_restore_items: z.number().int().min(0).max(15).optional().default(5),
+  /**
+   * When true (default), reuse an active session with the same project_root + name
+   * (and matching machine_id when provided) instead of creating a duplicate.
+   */
+  reuse: z.boolean().optional().default(true),
+  /** Force a brand-new session even if a reusable one exists. */
+  force_new: z.boolean().optional().default(false),
 });
 
 export const sessionEndSchema = z.object({
@@ -40,6 +51,8 @@ export const sessionEndSchema = z.object({
 export const sessionListSchema = z.object({
   include_inactive: z.boolean().optional(),
   project_root: z.string().optional(),
+  /** When true, include full claims and coordination request payloads. Default false (counts only). */
+  detail: z.boolean().optional().default(false),
 });
 
 export const sessionHeartbeatSchema = z.object({
@@ -72,6 +85,8 @@ export const configSchema = z.object({
 
 export const statusSchema = z.object({
   session_id: sessionIdSchema,
+  /** When true, include full coordination request payloads. Default false (counts only). */
+  detail: z.boolean().optional().default(false),
 });
 
 // Priority schema (0-100, default 50)
@@ -86,6 +101,8 @@ export const claimCreateSchema = z.object({
   scope: claimScopeSchema.optional(),
   priority: z.number().min(0).max(100).optional(),
   allow_conflicts: z.boolean().optional(),
+  /** Include full files/conflicts payloads. Default false (compact). */
+  detail: z.boolean().optional().default(false),
 }).refine(
   (data) => (data.files && data.files.length > 0) || (data.symbols && data.symbols.length > 0),
   { message: 'Either files or symbols must be provided' }
@@ -103,6 +120,8 @@ export const claimCheckSchema = z.object({
   symbols: symbolClaimsArraySchema.optional(),
   session_id: sessionIdSchema,
   exclude_self: z.boolean().optional(),
+  /** Include full conflict payloads. Default false. */
+  detail: z.boolean().optional().default(false),
 });
 
 export const claimReleaseSchema = z.object({
@@ -124,6 +143,8 @@ export const claimListSchema = z.object({
   session_id: z.string().optional(),
   status: z.enum(['active', 'completed', 'abandoned', 'all']).optional(),
   project_root: z.string().optional(),
+  /** Include full file lists. Default false (file_count only). */
+  detail: z.boolean().optional().default(false),
 });
 
 // Helper function to validate and return parsed data or error result

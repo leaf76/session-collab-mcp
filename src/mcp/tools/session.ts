@@ -5,7 +5,11 @@ import type { McpTool, McpToolResult } from '../protocol.js';
 import { createToolResult } from '../protocol.js';
 import {
   createSession,
+  findReusableSession,
   listSessions,
+  listSessionSummaries,
+  countActiveClaims,
+  countCoordination,
   updateSessionConfig,
   updateSessionHeartbeat,
   endSession,
@@ -40,6 +44,8 @@ import {
   ERROR_CODES,
 } from '../../utils/response.js';
 import { getPriorityLevel } from '../../db/types.js';
+import { DEFAULT_STALE_SESSION_MINUTES } from '../../constants.js';
+import { normalizeProjectRoot, PathNormalizationError } from '../../utils/paths.js';
 
 function parseJsonField<T>(value: string | null): T | null {
   if (!value) return null;
@@ -84,17 +90,35 @@ function formatOutgoingCoordination(entry: QueueEntryWithDetails): Record<string
 export const sessionTools: McpTool[] = [
   {
     name: 'collab_session_start',
-    description: 'Start a new session. Call this when starting work.',
+    description:
+      'Start or reuse a collaboration session for non-trivial / multi-session work. Skip pure Q&A. restore_context defaults false; reuses same name+project by default.',
     inputSchema: {
       type: 'object',
       properties: {
         name: {
           type: 'string',
-          description: "Optional session name, e.g., 'frontend-refactor'",
+          description: "Optional session name, e.g., 'frontend-refactor' (enables reuse)",
         },
         project_root: {
           type: 'string',
           description: 'Project root directory path',
+        },
+        restore_context: {
+          type: 'boolean',
+          description:
+            'If true, restore high-priority memories from active sessions (token cost). Default false.',
+        },
+        max_restore_items: {
+          type: 'number',
+          description: 'Max restored memories when restore_context is true (0-15, default 5).',
+        },
+        reuse: {
+          type: 'boolean',
+          description: 'Reuse active session with same project_root + name. Default true.',
+        },
+        force_new: {
+          type: 'boolean',
+          description: 'Always create a new session. Default false.',
         },
       },
       required: ['project_root'],
@@ -121,7 +145,8 @@ export const sessionTools: McpTool[] = [
   },
   {
     name: 'collab_session_list',
-    description: 'List all active sessions.',
+    description:
+      'List sessions. Default is summary (counts only). Set detail=true for full claims and coordination payloads.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -132,6 +157,10 @@ export const sessionTools: McpTool[] = [
         project_root: {
           type: 'string',
           description: 'Filter by project root',
+        },
+        detail: {
+          type: 'boolean',
+          description: 'Include full claims and coordination requests. Default false.',
         },
       },
     },
@@ -194,13 +223,18 @@ export const sessionTools: McpTool[] = [
   },
   {
     name: 'collab_status',
-    description: 'Get current session status.',
+    description:
+      'Get current session status. Default omits full coordination payloads; set detail=true when needed.',
     inputSchema: {
       type: 'object',
       properties: {
         session_id: {
           type: 'string',
           description: 'Session ID to check',
+        },
+        detail: {
+          type: 'boolean',
+          description: 'Include full coordination request payloads. Default false.',
         },
       },
       required: ['session_id'],
@@ -222,54 +256,99 @@ export async function handleSessionTool(
       }
       const input = validation.data;
 
+      let projectRoot: string;
+      try {
+        projectRoot = normalizeProjectRoot(input.project_root);
+      } catch (err) {
+        const message = err instanceof PathNormalizationError ? err.message : 'Invalid project_root';
+        return validationError(message);
+      }
+
       // Cleanup stale sessions and claims
-      await cleanupStaleSessions(db, 30);
+      await cleanupStaleSessions(db, DEFAULT_STALE_SESSION_MINUTES);
       await cleanupStaleClaims(db);
 
-      const session = await createSession(db, {
-        name: input.name,
-        project_root: input.project_root,
-        machine_id: input.machine_id,
-        user_id: userId,
-      });
+      const forceNew = input.force_new ?? false;
+      const reuse = (input.reuse ?? true) && !forceNew;
+      let session = reuse
+        ? await findReusableSession(db, {
+            project_root: projectRoot,
+            name: input.name,
+            machine_id: input.machine_id,
+            user_id: userId,
+          })
+        : null;
+      let reused = false;
 
-      await logAuditEvent(db, {
-        session_id: session.id,
-        action: 'session_started',
-        entity_type: 'session',
-        entity_id: session.id,
-        metadata: { project_root: input.project_root },
-      });
+      if (session) {
+        reused = true;
+        await updateSessionHeartbeat(db, session.id, {});
+        session = (await getSession(db, session.id)) ?? session;
+      } else {
+        session = await createSession(db, {
+          name: input.name,
+          project_root: projectRoot,
+          machine_id: input.machine_id,
+          user_id: userId,
+        });
 
-      const activeSessions = await listSessions(db, { project_root: input.project_root, user_id: userId });
+        await logAuditEvent(db, {
+          session_id: session.id,
+          action: 'session_started',
+          entity_type: 'session',
+          entity_id: session.id,
+          metadata: { project_root: projectRoot },
+        });
+      }
 
-      // Load active memories from all sessions
-      const allMemories: Array<{
+      const activeSessions = await listSessions(db, { project_root: projectRoot, user_id: userId });
+
+      // Opt-in context restore (default off) to avoid burning tokens on every start
+      const restoreContext = input.restore_context ?? false;
+      const maxRestoreItems = input.max_restore_items ?? 5;
+      let restoredContext: Array<{
         category: string;
         key: string;
         content: string;
-      }> = [];
+      }> | null = null;
 
-      for (const otherSession of activeSessions) {
-        const memories = await getActiveMemories(db, otherSession.id, {
-          priority_threshold: 70,
-          max_items: 10
-        });
-        for (const mem of memories) {
-          allMemories.push({
-            category: mem.category,
-            key: mem.key,
-            content: mem.content,
+      if (restoreContext && maxRestoreItems > 0) {
+        const allMemories: Array<{
+          category: string;
+          key: string;
+          content: string;
+        }> = [];
+        const perSessionCap = Math.min(10, maxRestoreItems);
+
+        for (const otherSession of activeSessions) {
+          if (allMemories.length >= maxRestoreItems) break;
+          const memories = await getActiveMemories(db, otherSession.id, {
+            priority_threshold: 70,
+            max_items: perSessionCap,
           });
+          for (const mem of memories) {
+            allMemories.push({
+              category: mem.category,
+              key: mem.key,
+              content: mem.content,
+            });
+            if (allMemories.length >= maxRestoreItems) break;
+          }
         }
+
+        restoredContext = allMemories.length > 0 ? allMemories : null;
       }
 
       return successResponse({
         session_id: session.id,
         name: session.name,
+        project_root: projectRoot,
+        reused,
         active_sessions: activeSessions.length,
-        restored_context: allMemories.length > 0 ? allMemories.slice(0, 15) : null,
-        message: `Session started. ${activeSessions.length} active session(s).`,
+        restored_context: restoredContext,
+        message: reused
+          ? `Session reused. ${activeSessions.length} active session(s).`
+          : `Session started. ${activeSessions.length} active session(s).`,
       });
     }
 
@@ -333,6 +412,33 @@ export async function handleSessionTool(
         return validationError(validation.error);
       }
       const input = validation.data;
+      const detail = input.detail ?? false;
+
+      // Summary path: COUNT subqueries only (no claim row loads)
+      if (!detail) {
+        const summaries = await listSessionSummaries(db, {
+          include_inactive: input.include_inactive,
+          project_root: input.project_root,
+        });
+
+        return successResponse({
+          sessions: summaries.map((session) => ({
+            id: session.id,
+            name: session.name,
+            status: session.status,
+            current_task: session.current_task,
+            progress: parseJsonField(session.progress),
+            active_claims: session.active_claims,
+            pending_coordination: {
+              incoming: session.incoming_coordination,
+              outgoing: session.outgoing_coordination,
+            },
+            last_heartbeat: session.last_heartbeat,
+          })),
+          total: summaries.length,
+          detail: false,
+        });
+      }
 
       const sessions = await listSessions(db, {
         include_inactive: input.include_inactive,
@@ -372,6 +478,7 @@ export async function handleSessionTool(
       return successResponse({
         sessions: sessionsWithClaims,
         total: sessionsWithClaims.length,
+        detail: true,
       });
     }
 
@@ -454,41 +561,48 @@ export async function handleSessionTool(
         return validationError(validation.error);
       }
       const { session_id: sessionId } = validation.data;
+      const detail = validation.data.detail ?? false;
 
       const session = await getSession(db, sessionId);
       if (!session) {
         return errorResponse(ERROR_CODES.SESSION_NOT_FOUND, 'Session not found');
       }
 
-      const claims = await listClaims(db, { session_id: sessionId, status: 'active' });
+      const activeClaimCount = await countActiveClaims(db, sessionId);
+      const coordination = await countCoordination(db, sessionId);
       const memories = await getActiveMemories(db, sessionId, { priority_threshold: 70, max_items: 10 });
       const allSessions = await listSessions(db, { project_root: session.project_root });
-      const incomingCoordination = await listQueue(db, { owner_session_id: sessionId });
-      const outgoingCoordination = await listQueue(db, { session_id: sessionId });
 
-      return successResponse({
+      const response: Record<string, unknown> = {
         session: {
           id: session.id,
           name: session.name,
           status: session.status,
         },
-        claims: claims.map(c => ({
+        active_claims: activeClaimCount,
+        active_memories: memories.length,
+        other_sessions: allSessions.filter(s => s.id !== sessionId).length,
+        pending_coordination: coordination,
+        detail,
+        message: `Session active. ${activeClaimCount} claim(s), ${memories.length} memories.`,
+      };
+
+      if (detail) {
+        const claims = await listClaims(db, { session_id: sessionId, status: 'active' });
+        const incomingCoordination = await listQueue(db, { owner_session_id: sessionId });
+        const outgoingCoordination = await listQueue(db, { session_id: sessionId });
+        response.claims = claims.map(c => ({
           id: c.id,
           files: c.files,
           intent: c.intent,
-        })),
-        active_memories: memories.length,
-        other_sessions: allSessions.filter(s => s.id !== sessionId).length,
-        pending_coordination: {
-          incoming: incomingCoordination.length,
-          outgoing: outgoingCoordination.length,
-        },
-        coordination_requests: {
+        }));
+        response.coordination_requests = {
           incoming: incomingCoordination.map(formatIncomingCoordination),
           outgoing: outgoingCoordination.map(formatOutgoingCoordination),
-        },
-        message: `Session active. ${claims.length} claim(s), ${memories.length} memories.`,
-      });
+        };
+      }
+
+      return successResponse(response);
     }
 
     default:

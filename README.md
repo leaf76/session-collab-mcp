@@ -100,13 +100,22 @@ npm install -g session-collab-mcp
 
 The MCP tools give you a stable collaboration workflow across providers:
 
-1. Start a session with `collab_session_start`
-2. Check files with `collab_claim(action="check")`
-3. Reserve files with `collab_claim(action="create")`; smart mode claims safe files and queues blocked files for coordination
-4. Update visible progress with `collab_session_update`
-5. Save important context with `collab_memory_save`
-6. Release claims with `collab_claim(action="release")`
-7. End the session with `collab_session_end`
+1. Start with `collab_session_start` only for non-trivial / multi-session work (`restore_context` defaults **false**; same `name`+project **reuses** session)
+2. Reserve files with **`collab_claim(action="create")`** in one batch (atomic claim-or-block; paths normalized to project_root). `check` is optional probe-only
+3. Update progress with `collab_session_update` sparingly (milestones)
+4. Save **short** findings/decisions with `collab_memory_save` (≤800 chars; not a long-term vault)
+5. Release with `collab_claim(action="release")`
+6. End with `collab_session_end`
+
+Token-friendly defaults: list/status/claim happy-path are **compact** unless `detail=true`.
+
+### Local MCP + plugin skills
+
+```bash
+npm run install:local   # build dist + sync plugin skills/commands into Claude cache
+```
+
+Point your MCP config at `dist/cli.js` (this repo). Restart the host after install.
 
 ### Working Memory
 
@@ -159,12 +168,12 @@ In `smart` mode, prefer symbol-level claims when working inside a file that anot
 
 | Tool | Purpose |
 |------|---------|
-| `collab_session_start` | Register a new session |
+| `collab_session_start` | Register a session (`restore_context` / `max_restore_items` optional; restore off by default) |
 | `collab_session_end` | End session and release all claims |
-| `collab_session_list` | List active sessions with current task and active claim summaries |
+| `collab_session_list` | List sessions (summary by default; `detail=true` for full claims/coordination) |
 | `collab_session_update` | Update heartbeat, current task, todos, and progress |
 | `collab_config` | Configure session behavior |
-| `collab_status` | Get session status summary |
+| `collab_status` | Session status (counts by default; `detail=true` for full payloads) |
 
 ### Claims (1 unified tool)
 
@@ -407,6 +416,20 @@ session-collab-mcp/
 ```
 
 ## Changelog
+
+### v2.5.0
+
+- Normalize claim paths to `project_root` (absolute ≡ relative; reject traversal)
+- Session start reuses same `name`+project by default (`force_new` to skip); idle stale default 15 minutes
+- Prefer atomic `collab_claim` create; compact happy-path responses (`detail` for full payloads)
+- `list`/`status` summary uses SQL counts; memory content capped (800 chars) with smaller active recall default
+- Token-conscious skills/`SERVER_INSTRUCTIONS`; collab memory vs AI-Memory role split
+- Add `npm run install:local` to build and sync plugin skills into Claude cache
+
+### v2.4.0
+
+- `restore_context` defaults false on start; `list`/`status` summary unless `detail=true`
+- Shorten server instructions; non-trivial-only collab-start guidance
 
 ### v2.3.1
 

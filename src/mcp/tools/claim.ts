@@ -34,6 +34,12 @@ import {
   validateActiveSession,
   ERROR_CODES,
 } from '../../utils/response.js';
+import {
+  normalizeClaimPaths,
+  normalizeSymbolClaims,
+  PathNormalizationError,
+} from '../../utils/paths.js';
+import { clampMemoryContent } from '../../utils/memory-content.js';
 
 function parseSessionConfig(session: Session): SessionConfig {
   if (!session.config) {
@@ -47,7 +53,22 @@ function parseSessionConfig(session: Session): SessionConfig {
   }
 }
 
-function mapConflict(conflict: ConflictInfo, ownerSession: Session | null): Record<string, unknown> {
+function mapConflict(
+  conflict: ConflictInfo,
+  ownerSession: Session | null,
+  detail: boolean
+): Record<string, unknown> {
+  if (!detail) {
+    return {
+      claim_id: conflict.claim_id,
+      session_id: conflict.session_id,
+      session_name: conflict.session_name,
+      file: conflict.file_path,
+      intent: conflict.intent,
+      conflict_level: conflict.conflict_level,
+      symbol_name: conflict.symbol_name ?? null,
+    };
+  }
   return {
     claim_id: conflict.claim_id,
     session_id: conflict.session_id,
@@ -66,8 +87,13 @@ function mapConflict(conflict: ConflictInfo, ownerSession: Session | null): Reco
 
 async function formatConflicts(
   db: DatabaseAdapter,
-  conflicts: ConflictInfo[]
+  conflicts: ConflictInfo[],
+  detail: boolean
 ): Promise<Array<Record<string, unknown>>> {
+  if (!detail) {
+    return conflicts.map((conflict) => mapConflict(conflict, null, false));
+  }
+
   const sessions = new Map<string, Session | null>();
 
   for (const conflict of conflicts) {
@@ -76,7 +102,91 @@ async function formatConflicts(
     }
   }
 
-  return conflicts.map((conflict) => mapConflict(conflict, sessions.get(conflict.session_id) ?? null));
+  return conflicts.map((conflict) =>
+    mapConflict(conflict, sessions.get(conflict.session_id) ?? null, true)
+  );
+}
+
+function compactClaimSuccess(params: {
+  claim_id: string;
+  status: string;
+  files: string[];
+  symbols?: SymbolClaim[];
+  intent?: string;
+  detail: boolean;
+  message: string;
+  extra?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    success: true,
+    claim_id: params.claim_id,
+    status: params.status,
+    file_count: params.files.length,
+    message: params.message,
+    ...params.extra,
+  };
+  if (params.detail) {
+    base.files = params.files;
+    base.claimed_files = params.files;
+    base.safe_files = params.files;
+    base.blocked_files = [];
+    base.symbols = params.symbols ?? [];
+    if (params.intent) base.intent = params.intent;
+  }
+  return base;
+}
+
+function compactConflictResponse(params: {
+  success: boolean;
+  status: string;
+  files: string[];
+  blockedFiles: string[];
+  safeFiles: string[];
+  symbols?: SymbolClaim[];
+  conflicts: Array<Record<string, unknown>>;
+  coordination_requests?: Array<Record<string, unknown>>;
+  recommendation?: string;
+  claim_id?: string;
+  detail: boolean;
+  message: string;
+  warning?: string;
+}): Record<string, unknown> {
+  // Conflict paths always include safe/blocked file lists (agent must act on them)
+  const base: Record<string, unknown> = {
+    success: params.success,
+    status: params.status,
+    file_count: params.files.length,
+    claimed_files: params.claim_id ? params.safeFiles : [],
+    safe_files: params.safeFiles,
+    blocked_files: params.blockedFiles,
+    blocked_count: params.blockedFiles.length,
+    safe_count: params.safeFiles.length,
+    conflicts: params.conflicts,
+    message: params.message,
+  };
+  if (params.claim_id) base.claim_id = params.claim_id;
+  if (params.recommendation) base.recommendation = params.recommendation;
+  if (params.warning) base.warning = params.warning;
+  // Always surface coordination (needed for agent action); compact when !detail
+  if (params.coordination_requests) {
+    base.coordination_count = params.coordination_requests.length;
+    base.coordination_requests = params.detail
+      ? params.coordination_requests
+      : params.coordination_requests.map((r) => ({
+          queue_id: r.queue_id,
+          owner_session_id: r.owner_session_id,
+          owner_session_name: r.owner_session_name,
+          owner_claim_id: r.owner_claim_id,
+          requested_by_session_id: r.requested_by_session_id,
+          files: r.files,
+          position: r.position,
+        }));
+  }
+  if (params.detail) {
+    base.files = params.files;
+    base.symbols = params.symbols ?? [];
+  }
+  return base;
 }
 
 function uniqueBlockedFiles(conflicts: ConflictInfo[]): string[] {
@@ -129,13 +239,21 @@ async function createTrackedClaim(
     metadata: { files: input.files, intent: input.intent },
   });
 
+  const filePreview =
+    input.files.length <= 5
+      ? input.files.join(', ')
+      : `${input.files.slice(0, 5).join(', ')} (+${input.files.length - 5} more)`;
+  const clamped = clampMemoryContent(
+    `Working on: ${input.intent}\nFiles (${input.files.length}): ${filePreview}`
+  );
+
   await saveMemory(db, input.session_id, {
     category: 'state',
     key: `claim_${claim.id}`,
-    content: `Working on: ${input.intent}\nFiles: ${input.files.join(', ')}`,
+    content: clamped.content,
     priority: 60,
     related_claim_id: claim.id,
-    metadata: { claim_id: claim.id, files: input.files },
+    metadata: { claim_id: claim.id, file_count: input.files.length },
   });
 
   return claim.id;
@@ -225,11 +343,7 @@ async function createCoordinationRequests(
 export const claimTools: McpTool[] = [
   {
     name: 'collab_claim',
-    description: `Unified tool for file/symbol claims. Use action parameter to:
-- "create": Declare files you're about to modify; smart mode queues blocked files for coordination
-- "check": Check if files are being worked on (ALWAYS call before editing)
-- "release": Release a claim when done
-- "list": List all active claims`,
+    description: `Unified file/symbol claims. Prefer action=create (atomic claim-or-block; paths normalized to project_root). check is optional probe-only. detail defaults false (compact).`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -245,7 +359,7 @@ export const claimTools: McpTool[] = [
         files: {
           type: 'array',
           items: { type: 'string' },
-          description: 'File paths (for create/check actions)',
+          description: 'File paths (create/check); absolute or relative — normalized to project_root',
         },
         exclude_self: {
           type: 'boolean',
@@ -297,6 +411,10 @@ export const claimTools: McpTool[] = [
           type: 'boolean',
           description: 'Explicitly create a claim even when conflicts are detected (for create action)',
         },
+        detail: {
+          type: 'boolean',
+          description: 'Full files/conflicts payloads (default false)',
+        },
         summary: {
           type: 'string',
           description: 'Release summary (for release action)',
@@ -334,6 +452,7 @@ export async function handleClaimTool(
         return validationError(validation.error);
       }
       const input = validation.data;
+      const detail = input.detail ?? false;
 
       // Verify session exists and is active
       const sessionResult = await validateActiveSession(db, input.session_id);
@@ -341,29 +460,43 @@ export async function handleClaimTool(
         return sessionResult.error;
       }
       const config = parseSessionConfig(sessionResult.session);
+      const projectRoot = sessionResult.session.project_root;
 
-      const symbolFiles = (input.symbols ?? []).map((symbol) => symbol.file);
-      const files = Array.from(new Set([...(input.files ?? []), ...symbolFiles]));
+      let files: string[];
+      let symbols: SymbolClaim[] | undefined;
+      try {
+        const rawSymbols = input.symbols as SymbolClaim[] | undefined;
+        symbols = rawSymbols
+          ? (normalizeSymbolClaims(rawSymbols, projectRoot) as SymbolClaim[])
+          : undefined;
+        const symbolFiles = (symbols ?? []).map((symbol) => symbol.file);
+        files = normalizeClaimPaths([...(input.files ?? []), ...symbolFiles], projectRoot);
+      } catch (err) {
+        const message = err instanceof PathNormalizationError ? err.message : 'Invalid file path';
+        return validationError(message);
+      }
 
-      const conflicts = await checkConflicts(db, files, input.session_id, input.symbols);
-      const formattedConflicts = await formatConflicts(db, conflicts);
+      const conflicts = await checkConflicts(db, files, input.session_id, symbols);
+      const formattedConflicts = await formatConflicts(db, conflicts, detail);
       const blockedFiles = uniqueBlockedFiles(conflicts);
       const safeFiles = files.filter((file) => !blockedFiles.includes(file));
-      const safeSymbols = filterSafeSymbols(input.symbols, safeFiles);
+      const safeSymbols = filterSafeSymbols(symbols, safeFiles);
 
       if (conflicts.length > 0 && config.mode === 'strict') {
-        return successResponse({
-          success: false,
-          status: 'blocked_by_conflicts',
-          files,
-          symbols: input.symbols ?? [],
-          claimed_files: [],
-          safe_files: safeFiles,
-          blocked_files: blockedFiles,
-          conflicts: formattedConflicts,
-          recommendation: 'coordinate_before_editing',
-          message: `Claim not created. ${conflicts.length} conflict(s) detected. Coordinate before proceeding.`,
-        });
+        return successResponse(
+          compactConflictResponse({
+            success: false,
+            status: 'blocked_by_conflicts',
+            files,
+            blockedFiles,
+            safeFiles,
+            symbols,
+            conflicts: formattedConflicts,
+            recommendation: 'coordinate_before_editing',
+            detail,
+            message: `Claim not created. ${conflicts.length} conflict(s) detected. Coordinate before proceeding.`,
+          })
+        );
       }
 
       if (conflicts.length > 0) {
@@ -385,81 +518,87 @@ export async function handleClaimTool(
               priority: input.priority,
             });
 
-            return successResponse({
-              success: true,
-              claim_id: claimId,
-              status: 'partial_claim_created',
-              files,
-              claimed_files: safeFiles,
-              safe_files: safeFiles,
-              blocked_files: blockedFiles,
-              symbols: safeSymbols ?? [],
-              conflicts: formattedConflicts,
-              coordination_requests: coordinationRequests,
-              recommendation: getCoordinationRecommendation(input.symbols, conflicts),
-              message: `Claim created for safe files only. Coordinate before editing blocked files: [${blockedFiles.join(', ')}].`,
-            });
+            return successResponse(
+              compactConflictResponse({
+                success: true,
+                status: 'partial_claim_created',
+                claim_id: claimId,
+                files,
+                blockedFiles,
+                safeFiles,
+                symbols: safeSymbols,
+                conflicts: formattedConflicts,
+                coordination_requests: coordinationRequests,
+                recommendation: getCoordinationRecommendation(symbols, conflicts),
+                detail,
+                message: `Claim created for safe files only. Coordinate before editing blocked files: [${blockedFiles.join(', ')}].`,
+              })
+            );
           }
 
-          return successResponse({
-            success: false,
-            status: 'waiting_for_coordination',
-            files,
-            claimed_files: [],
-            safe_files: [],
-            blocked_files: blockedFiles,
-            symbols: input.symbols ?? [],
-            conflicts: formattedConflicts,
-            coordination_requests: coordinationRequests,
-            recommendation: getCoordinationRecommendation(input.symbols, conflicts),
-            message: `Claim not created. Waiting for coordination on blocked files: [${blockedFiles.join(', ')}].`,
-          });
+          return successResponse(
+            compactConflictResponse({
+              success: false,
+              status: 'waiting_for_coordination',
+              files,
+              blockedFiles,
+              safeFiles: [],
+              symbols,
+              conflicts: formattedConflicts,
+              coordination_requests: coordinationRequests,
+              recommendation: getCoordinationRecommendation(symbols, conflicts),
+              detail,
+              message: `Claim not created. Waiting for coordination on blocked files: [${blockedFiles.join(', ')}].`,
+            })
+          );
         }
 
         const claimId = await createTrackedClaim(db, {
           session_id: input.session_id,
           files,
-          symbols: input.symbols,
+          symbols,
           intent: input.intent,
           scope: input.scope,
           priority: input.priority,
         });
 
-        return successResponse({
-          success: true,
-          claim_id: claimId,
-          status: 'created_with_conflicts',
-          files,
-          claimed_files: files,
-          safe_files: safeFiles,
-          blocked_files: blockedFiles,
-          symbols: input.symbols ?? [],
-          conflicts: formattedConflicts,
-          warning: `⚠️ ${conflicts.length} conflict(s) detected. Coordinate before proceeding.`,
-        });
+        return successResponse(
+          compactConflictResponse({
+            success: true,
+            status: 'created_with_conflicts',
+            claim_id: claimId,
+            files,
+            blockedFiles,
+            safeFiles,
+            symbols,
+            conflicts: formattedConflicts,
+            detail,
+            message: `Claim created with ${conflicts.length} conflict(s). Coordinate before proceeding.`,
+            warning: `⚠️ ${conflicts.length} conflict(s) detected. Coordinate before proceeding.`,
+          })
+        );
       }
 
       const claimId = await createTrackedClaim(db, {
         session_id: input.session_id,
         files,
-        symbols: input.symbols,
+        symbols,
         intent: input.intent,
         scope: input.scope,
         priority: input.priority,
       });
 
-      return successResponse({
-        success: true,
-        claim_id: claimId,
-        status: 'created',
-        files,
-        claimed_files: files,
-        safe_files: files,
-        blocked_files: [],
-        symbols: input.symbols ?? [],
-        intent: input.intent,
-        message: 'Claim created successfully.',
-      });
+      return successResponse(
+        compactClaimSuccess({
+          claim_id: claimId,
+          status: 'created',
+          files,
+          symbols,
+          intent: input.intent,
+          detail,
+          message: 'Claim created successfully.',
+        })
+      );
     }
 
     case 'check': {
@@ -468,43 +607,72 @@ export async function handleClaimTool(
         return validationError(validation.error);
       }
       const input = validation.data;
+      const detail = input.detail ?? false;
 
       if (!input.session_id) {
         return validationError('session_id is required');
       }
 
+      const sessionResult = await validateActiveSession(db, input.session_id);
+      if (!sessionResult.valid) {
+        return sessionResult.error;
+      }
+
+      let files: string[];
+      let symbols: SymbolClaim[] | undefined;
+      try {
+        const rawSymbols = input.symbols as SymbolClaim[] | undefined;
+        symbols = rawSymbols
+          ? (normalizeSymbolClaims(rawSymbols, sessionResult.session.project_root) as SymbolClaim[])
+          : undefined;
+        files = normalizeClaimPaths(input.files, sessionResult.session.project_root);
+      } catch (err) {
+        const message = err instanceof PathNormalizationError ? err.message : 'Invalid file path';
+        return validationError(message);
+      }
+
       const excludeSelf = input.exclude_self ?? true;
       const excludeSessionId = excludeSelf ? input.session_id : undefined;
-      const conflicts = await checkConflicts(db, input.files, excludeSessionId, input.symbols);
-      const formattedConflicts = await formatConflicts(db, conflicts);
+      const conflicts = await checkConflicts(db, files, excludeSessionId, symbols);
+      const formattedConflicts = await formatConflicts(db, conflicts, detail);
 
       if (conflicts.length === 0) {
-        return successResponse({
+        const ok: Record<string, unknown> = {
           safe: true,
           has_conflicts: false,
           can_edit: true,
           recommendation: 'proceed',
-          safe_files: input.files,
+          file_count: files.length,
           conflicts: [],
-          message: 'All files are safe to edit. Proceed.',
-        });
+          message: 'All files are safe to edit. Prefer collab_claim create to reserve them.',
+        };
+        if (detail) {
+          ok.safe_files = files;
+        }
+        return successResponse(ok);
       }
 
       const blockedFiles = new Set(conflicts.map(c => c.file_path));
-      const safeFiles = input.files.filter(f => !blockedFiles.has(f));
+      const safeFiles = files.filter(f => !blockedFiles.has(f));
 
-      return successResponse({
+      const blocked: Record<string, unknown> = {
         safe: false,
         has_conflicts: true,
         can_edit: safeFiles.length > 0,
         recommendation: safeFiles.length > 0 ? 'proceed_safe_only' : 'abort',
-        safe_files: safeFiles,
+        file_count: files.length,
         blocked_files: Array.from(blockedFiles),
+        blocked_count: blockedFiles.size,
+        safe_count: safeFiles.length,
         conflicts: formattedConflicts,
         message: safeFiles.length > 0
           ? `Edit ONLY safe files: [${safeFiles.join(', ')}]. Skip blocked files.`
           : 'All files blocked. Coordinate with other session(s).',
-      });
+      };
+      if (detail) {
+        blocked.safe_files = safeFiles;
+      }
+      return successResponse(blocked);
     }
 
     case 'release': {
@@ -565,7 +733,7 @@ export async function handleClaimTool(
       return successResponse({
         success: true,
         claim_id: input.claim_id,
-        files: claim.files,
+        file_count: claim.files.length,
         notifications_sent,
         message: `Claim ${status} released. Files now available.`,
       });
@@ -577,6 +745,7 @@ export async function handleClaimTool(
         return validationError(validation.error);
       }
       const input = validation.data;
+      const detail = input.detail ?? false;
 
       if (!input.session_id) {
         return validationError('session_id is required');
@@ -589,15 +758,22 @@ export async function handleClaimTool(
       });
 
       return successResponse({
-        claims: claims.map(c => ({
-          id: c.id,
-          session_name: c.session_name,
-          files: c.files,
-          intent: c.intent,
-          priority: getPriorityLevel(c.priority),
-          created_at: c.created_at,
-        })),
+        claims: claims.map(c => {
+          const row: Record<string, unknown> = {
+            id: c.id,
+            session_name: c.session_name,
+            file_count: c.files.length,
+            intent: c.intent,
+            priority: getPriorityLevel(c.priority),
+            created_at: c.created_at,
+          };
+          if (detail) {
+            row.files = c.files;
+          }
+          return row;
+        }),
         total: claims.length,
+        detail,
       });
     }
 

@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDatabase, TestDatabase } from '../../db/__tests__/test-helper.js';
 import { handleSessionTool } from '../tools/session.js';
-import { createSession, createClaim, listClaims, getSession, joinQueue } from '../../db/queries.js';
+import { createSession, createClaim, listClaims, getSession, joinQueue, saveMemory } from '../../db/queries.js';
 
 describe('Session Tools', () => {
   let db: TestDatabase;
@@ -26,6 +26,101 @@ describe('Session Tools', () => {
       const response = JSON.parse(result.content[0].text);
       expect(response.session_id).toBeDefined();
       expect(response.message).toContain('started');
+      expect(response.reused).toBe(false);
+      // Token default: no context restore unless opt-in
+      expect(response.restored_context).toBeNull();
+    });
+
+    it('should reuse an active session with the same project_root + name', async () => {
+      const first = await handleSessionTool(db, 'collab_session_start', {
+        project_root: '/test/project',
+        name: 'feature-auth',
+      });
+      const firstId = JSON.parse(first.content[0].text).session_id;
+
+      const second = await handleSessionTool(db, 'collab_session_start', {
+        project_root: '/test/project',
+        name: 'feature-auth',
+      });
+      const secondResponse = JSON.parse(second.content[0].text);
+
+      expect(secondResponse.reused).toBe(true);
+      expect(secondResponse.session_id).toBe(firstId);
+      expect(secondResponse.message).toContain('reused');
+    });
+
+    it('should force a new session when force_new is true', async () => {
+      const first = await handleSessionTool(db, 'collab_session_start', {
+        project_root: '/test/project',
+        name: 'feature-auth',
+      });
+      const firstId = JSON.parse(first.content[0].text).session_id;
+
+      const second = await handleSessionTool(db, 'collab_session_start', {
+        project_root: '/test/project',
+        name: 'feature-auth',
+        force_new: true,
+      });
+      const secondResponse = JSON.parse(second.content[0].text);
+
+      expect(secondResponse.reused).toBe(false);
+      expect(secondResponse.session_id).not.toBe(firstId);
+    });
+
+    it('should not restore context by default even when high-priority memories exist', async () => {
+      const prior = await createSession(db, {
+        project_root: '/test/project',
+        name: 'prior-session',
+      });
+      await saveMemory(db, prior.id, {
+        category: 'finding',
+        key: 'root-cause',
+        content: 'Bug is in auth middleware',
+        priority: 90,
+        pinned: true,
+      });
+
+      const result = await handleSessionTool(db, 'collab_session_start', {
+        project_root: '/test/project',
+        name: 'new-session',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.restored_context).toBeNull();
+    });
+
+    it('should restore high-priority memories when restore_context is true', async () => {
+      const prior = await createSession(db, {
+        project_root: '/test/project',
+        name: 'prior-session',
+      });
+      await saveMemory(db, prior.id, {
+        category: 'finding',
+        key: 'root-cause',
+        content: 'Bug is in auth middleware',
+        priority: 90,
+        pinned: true,
+      });
+
+      const result = await handleSessionTool(db, 'collab_session_start', {
+        project_root: '/test/project',
+        name: 'new-session',
+        restore_context: true,
+        max_restore_items: 5,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.restored_context).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: 'root-cause',
+            content: 'Bug is in auth middleware',
+          }),
+        ])
+      );
+      expect(response.restored_context.length).toBeLessThanOrEqual(5);
     });
 
     it('should validate required project_root', async () => {
@@ -89,7 +184,7 @@ describe('Session Tools', () => {
       expect(response.sessions.some((s: { id: string }) => s.id === otherSession.id)).toBe(false);
     });
 
-    it('should include active claim summaries and current task for each session', async () => {
+    it('should return summary counts by default without full claim payloads', async () => {
       const session = await createSession(db, {
         project_root: '/test/project',
         name: 'summary-session',
@@ -114,6 +209,42 @@ describe('Session Tools', () => {
 
       expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
+      expect(response.detail).toBe(false);
+      const listed = response.sessions.find((s: { id: string }) => s.id === session.id);
+      expect(listed.current_task).toBe('Writing session summary');
+      expect(listed.active_claims).toBe(1);
+      expect(listed.claims).toBeUndefined();
+      expect(listed.coordination_requests).toBeUndefined();
+      expect(listed.todos).toBeUndefined();
+    });
+
+    it('should include full claim payloads when detail is true', async () => {
+      const session = await createSession(db, {
+        project_root: '/test/project',
+        name: 'detail-session',
+      });
+
+      await createClaim(db, {
+        session_id: session.id,
+        files: ['src/summary.ts'],
+        intent: 'Summarize active work',
+        scope: 'small',
+        priority: 75,
+      });
+
+      await handleSessionTool(db, 'collab_session_update', {
+        session_id: session.id,
+        current_task: 'Writing session summary',
+      });
+
+      const result = await handleSessionTool(db, 'collab_session_list', {
+        project_root: '/test/project',
+        detail: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.detail).toBe(true);
       const listed = response.sessions.find((s: { id: string }) => s.id === session.id);
       expect(listed.current_task).toBe('Writing session summary');
       expect(listed.active_claims).toBe(1);
@@ -150,15 +281,24 @@ describe('Session Tools', () => {
         scope: 'small',
       });
 
-      const result = await handleSessionTool(db, 'collab_session_list', {
+      const summaryResult = await handleSessionTool(db, 'collab_session_list', {
         project_root: '/test/project',
       });
+      const detailResult = await handleSessionTool(db, 'collab_session_list', {
+        project_root: '/test/project',
+        detail: true,
+      });
 
-      expect(result.isError).toBeFalsy();
-      const response = JSON.parse(result.content[0].text);
-      const listedOwner = response.sessions.find((s: { id: string }) => s.id === owner.id);
-      const listedWaiter = response.sessions.find((s: { id: string }) => s.id === waiter.id);
+      expect(summaryResult.isError).toBeFalsy();
+      expect(detailResult.isError).toBeFalsy();
+      const summary = JSON.parse(summaryResult.content[0].text);
+      const detail = JSON.parse(detailResult.content[0].text);
+      const summaryOwner = summary.sessions.find((s: { id: string }) => s.id === owner.id);
+      const listedOwner = detail.sessions.find((s: { id: string }) => s.id === owner.id);
+      const listedWaiter = detail.sessions.find((s: { id: string }) => s.id === waiter.id);
 
+      expect(summaryOwner.pending_coordination.incoming).toBe(1);
+      expect(summaryOwner.coordination_requests).toBeUndefined();
       expect(listedOwner.pending_coordination.incoming).toBe(1);
       expect(listedOwner.coordination_requests[0]).toMatchObject({
         requested_by_session_id: waiter.id,
@@ -265,7 +405,7 @@ describe('Session Tools', () => {
       });
     });
 
-    it('should return session status', async () => {
+    it('should return session status summary by default', async () => {
       const result = await handleSessionTool(db, 'collab_status', {
         session_id: sessionId,
       });
@@ -273,11 +413,14 @@ describe('Session Tools', () => {
       expect(result.isError).toBeFalsy();
       const response = JSON.parse(result.content[0].text);
       expect(response.session.id).toBe(sessionId);
-      expect(response.claims).toHaveLength(1);
+      expect(response.active_claims).toBe(1);
+      expect(response.claims).toBeUndefined();
+      expect(response.coordination_requests).toBeUndefined();
+      expect(response.detail).toBe(false);
       expect(response.message).toContain('1 claim(s)');
     });
 
-    it('should return pending coordination details for the current session', async () => {
+    it('should return full claim and coordination details when detail is true', async () => {
       const owner = await createSession(db, {
         project_root: '/test/project',
         name: 'owner-session',
@@ -298,18 +441,28 @@ describe('Session Tools', () => {
         scope: 'small',
       });
 
+      const summaryStatus = await handleSessionTool(db, 'collab_status', {
+        session_id: sessionId,
+      });
       const waiterStatus = await handleSessionTool(db, 'collab_status', {
         session_id: sessionId,
+        detail: true,
       });
       const ownerStatus = await handleSessionTool(db, 'collab_status', {
         session_id: owner.id,
+        detail: true,
       });
 
+      expect(summaryStatus.isError).toBeFalsy();
       expect(waiterStatus.isError).toBeFalsy();
       expect(ownerStatus.isError).toBeFalsy();
+      const summaryResponse = JSON.parse(summaryStatus.content[0].text);
       const waiterResponse = JSON.parse(waiterStatus.content[0].text);
       const ownerResponse = JSON.parse(ownerStatus.content[0].text);
 
+      expect(summaryResponse.pending_coordination.outgoing).toBe(1);
+      expect(summaryResponse.coordination_requests).toBeUndefined();
+      expect(waiterResponse.claims).toHaveLength(1);
       expect(waiterResponse.pending_coordination.outgoing).toBe(1);
       expect(waiterResponse.coordination_requests.outgoing[0]).toMatchObject({
         owner_session_id: owner.id,

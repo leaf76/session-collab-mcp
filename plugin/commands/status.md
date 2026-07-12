@@ -13,10 +13,11 @@ Display the current state of session collaboration.
 Call `mcp__session-collab__collab_session_list` with:
 - `project_root`: Current working directory
 - `include_inactive`: false
+- `detail`: false by default (counts only). Use `true` only when you need full claims/coordination.
 
 ### 2. List Current Session Claims
 
-If you know the current session ID, call `mcp__session-collab__collab_claim` with:
+If you know the current session ID and need file-level detail, call `mcp__session-collab__collab_claim` with:
 - `action`: `"list"`
 - `session_id`: Current session ID
 
@@ -24,6 +25,7 @@ If you know the current session ID, call `mcp__session-collab__collab_claim` wit
 
 If you know the current session ID, call `mcp__session-collab__collab_status` with:
 - `session_id`: Current session ID
+- `detail`: false by default; `true` for full claim/coordination payloads
 
 ## Output Format
 

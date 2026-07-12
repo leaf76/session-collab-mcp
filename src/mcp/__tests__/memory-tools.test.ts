@@ -75,6 +75,28 @@ describe('Memory Tools', () => {
       const response = JSON.parse(result.content[0].text);
       expect(response.error).toBe('INVALID_INPUT');
     });
+
+    it('should truncate long content and flag truncated', async () => {
+      const longContent = 'x'.repeat(2000);
+      const result = await handleMemoryTool(db, 'collab_memory_save', {
+        session_id: sessionId,
+        category: 'finding',
+        key: 'long_dump',
+        content: longContent,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const response = JSON.parse(result.content[0].text);
+      expect(response.truncated).toBe(true);
+      expect(response.content_length).toBeLessThanOrEqual(800);
+
+      const recall = await handleMemoryTool(db, 'collab_memory_recall', {
+        session_id: sessionId,
+        key: 'long_dump',
+      });
+      const recalled = JSON.parse(recall.content[0].text);
+      expect(recalled.memories[0].content.length).toBeLessThanOrEqual(800);
+    });
   });
 
   describe('collab_memory_recall', () => {
