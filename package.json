@@ -1,17 +1,22 @@
 {
   "name": "session-collab-mcp",
   "version": "2.5.0",
-  "description": "Provider-agnostic MCP collaboration server for agent sessions - prevents conflicts, persists context, and protects important files",
+  "description": "Provider-agnostic Model Context Protocol (MCP) collaboration server: claim files, persist working memory, and prevent multi-agent session conflicts",
   "license": "MIT",
+  "author": "leaf76",
   "keywords": [
     "mcp",
-    "agent",
+    "mcp-server",
+    "model-context-protocol",
     "ai-agent",
     "collaboration",
     "session",
     "conflict-prevention",
     "working-memory",
-    "conflict-detection"
+    "multi-agent",
+    "claude-code",
+    "codex",
+    "stdio"
   ],
   "type": "module",
   "bin": {
@@ -22,8 +27,21 @@
   "files": [
     "bin",
     "dist",
-    "migrations"
+    "migrations",
+    "LICENSE",
+    "README.md"
   ],
+  "homepage": "https://github.com/leaf76/session-collab-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/leaf76/session-collab-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leaf76/session-collab-mcp.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "build:legacy": "SESSION_COLLAB_INCLUDE_LEGACY=true tsup",

@@ -1,9 +1,14 @@
 # Session Collab MCP
 
 [![npm version](https://img.shields.io/npm/v/session-collab-mcp.svg)](https://www.npmjs.com/package/session-collab-mcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![license](https://img.shields.io/github/license/leaf76/session-collab-mcp)](https://github.com/leaf76/session-collab-mcp/blob/master/LICENSE)
+[![Node.js](https://img.shields.io/node/v/session-collab-mcp)](https://www.npmjs.com/package/session-collab-mcp)
 
-A provider-agnostic Model Context Protocol (MCP) server that prevents conflicts when multiple agent sessions work on the same codebase simultaneously.
+**Provider-agnostic Model Context Protocol (MCP) collaboration server** for multi-agent and multi-session workflows: claim files, persist working memory, protect critical paths, and prevent parallel coding-agent conflicts.
+
+Works with Claude Code, Codex, Grok, Cursor, and any MCP client over `stdio` or HTTP JSON-RPC. Optional Claude Code plugin packaging lives under [`plugin/`](plugin/).
+
+**Keywords:** MCP server, multi-agent collaboration, session conflict prevention, file claims, working memory, Claude Code, Codex.
 
 ## Problem
 
@@ -497,6 +502,12 @@ session-collab-mcp/
 - Fix SQLite WAL sync for multi-process MCP servers
 - Add `collab_config` tool for conflict handling modes
 
+## Related
+
+- [lazy-desktop-mcp](https://github.com/leaf76/lazy-desktop-mcp) — desktop computer-use MCP
+- [lazy_mobile_mcp](https://github.com/leaf76/lazy_mobile_mcp) — Android/iOS mobile automation MCP
+- [lazy-media-mcp](https://github.com/leaf76/lazy-media-mcp) — image/video prep for AI vision
+
 ## License
 
-MIT
+[MIT](./LICENSE) © leaf76
