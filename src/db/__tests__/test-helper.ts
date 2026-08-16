@@ -103,6 +103,10 @@ export class TestDatabase implements DatabaseAdapter {
     return transaction();
   }
 
+  getStoragePath(): string {
+    return ':memory:';
+  }
+
   close(): void {
     this.db.close();
   }

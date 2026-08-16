@@ -10,7 +10,7 @@ Works over `stdio` or HTTP JSON-RPC with Claude Code, Codex, Grok, Cursor, and o
 
 ## Why
 
-Parallel coding sessions often overwrite each other because there is no shared “work intent.” This server is a local WIP registry: declare files, check conflicts, persist short notes, protect critical paths, then release.
+**Same machine only** — this is not a remote Git lock. Parallel coding sessions on one OS user overwrite each other because there is no shared “work intent.” This server is a local WIP registry: declare files, check conflicts, persist short notes, protect critical paths, then release.
 
 ## Install
 
@@ -53,7 +53,7 @@ Use only for non-trivial / multi-session work.
 
 1. `collab_session_start` — same `name`+project **reuses**; `restore_context` default **false**
 2. `collab_claim` `action=create` — batch files; atomic claim-or-block; paths normalized to `project_root`. `check` is optional probe-only
-3. `collab_memory_save` — short notes only (≤800 chars; not a long-term vault)
+3. `collab_memory_save` — short notes only (≤800 chars, rejected if longer; not a vault)
 4. `collab_claim` `action=release` then `collab_session_end`
 
 `list` / `status` / claim happy-path are compact unless `detail=true`.
@@ -81,7 +81,14 @@ v2.0 breaking changes: [MIGRATION.md](./MIGRATION.md). Full history: [CHANGELOG.
 
 ## Data
 
-SQLite at `~/.claude/session-collab/collab.db` (WAL, local, offline). Treat it like any other local app data for that OS user.
+SQLite is **per machine / OS user** (WAL, offline). Path order:
+
+1. `SESSION_COLLAB_DB` if set
+2. `~/.session-collab/collab.db` if it already exists
+3. legacy `~/.claude/session-collab/collab.db` if it already exists
+4. otherwise create `~/.session-collab/collab.db`
+
+`collab_session_start` returns `scope: "local-machine"` and `db_path`. Claude Code plugin PreToolUse denies Write/Edit on files claimed by another session (`SESSION_COLLAB_HOOK_DISABLE=1` to skip).
 
 ## Development
 

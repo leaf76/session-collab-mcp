@@ -41,6 +41,8 @@ export const sessionStartSchema = z.object({
   reuse: z.boolean().optional().default(true),
   /** Force a brand-new session even if a reusable one exists. */
   force_new: z.boolean().optional().default(false),
+  /** Claude Code / client session id for PreToolUse claim enforcement. */
+  client_session_id: z.string().min(1).optional(),
 });
 
 export const sessionEndSchema = z.object({

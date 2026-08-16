@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDatabase, TestDatabase } from '../../db/__tests__/test-helper.js';
 import { createHttpServer } from '../server.js';
 
-const shouldRun = process.env.SESSION_COLLAB_HTTP_TESTS === 'true';
+const shouldRun = process.env.SESSION_COLLAB_HTTP_TESTS !== 'false';
 
 describe.runIf(shouldRun)('HTTP Server Integration', () => {
   let db: TestDatabase;

@@ -24,6 +24,8 @@ import {
   saveMemory,
   getSession,
 } from '../../db/queries.js';
+import { bindClientSession } from '../../db/client-map.js';
+import { getDefaultDbPath } from '../../db/db-path.js';
 import type { QueueEntryWithDetails, SessionConfig } from '../../db/types.js';
 import { DEFAULT_SESSION_CONFIG } from '../../db/types.js';
 import {
@@ -91,7 +93,7 @@ export const sessionTools: McpTool[] = [
   {
     name: 'collab_session_start',
     description:
-      'Start or reuse a collaboration session for non-trivial / multi-session work. Skip pure Q&A. restore_context defaults false; reuses same name+project by default.',
+      'Start or reuse a same-machine collaboration session (not a remote lock). Skip pure Q&A. restore_context defaults false; reuses same name+project by default.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -119,6 +121,10 @@ export const sessionTools: McpTool[] = [
         force_new: {
           type: 'boolean',
           description: 'Always create a new session. Default false.',
+        },
+        client_session_id: {
+          type: 'string',
+          description: 'Host session id (Claude Code hook session_id) for PreToolUse claim checks.',
         },
       },
       required: ['project_root'],
@@ -339,6 +345,16 @@ export async function handleSessionTool(
         restoredContext = allMemories.length > 0 ? allMemories : null;
       }
 
+      if (db.getStoragePath?.() !== ':memory:') {
+        bindClientSession(
+          session.id,
+          projectRoot,
+          input.client_session_id ?? process.env.CLAUDE_SESSION_ID
+        );
+      }
+
+      const dbPath = db.getStoragePath?.() ?? getDefaultDbPath();
+
       return successResponse({
         session_id: session.id,
         name: session.name,
@@ -346,9 +362,11 @@ export async function handleSessionTool(
         reused,
         active_sessions: activeSessions.length,
         restored_context: restoredContext,
+        scope: 'local-machine',
+        db_path: dbPath,
         message: reused
-          ? `Session reused. ${activeSessions.length} active session(s).`
-          : `Session started. ${activeSessions.length} active session(s).`,
+          ? `Session reused. ${activeSessions.length} active session(s). Same-machine SQLite only.`
+          : `Session started. ${activeSessions.length} active session(s). Same-machine SQLite only.`,
       });
     }
 

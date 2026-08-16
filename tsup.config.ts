@@ -5,7 +5,7 @@ const legacyEntry = process.env.SESSION_COLLAB_INCLUDE_LEGACY === 'true'
   : [];
 
 export default defineConfig({
-  entry: ['src/cli.ts', 'src/http/cli.ts', 'src/http/client-cli.ts', ...legacyEntry],
+  entry: ['src/cli.ts', 'src/http/cli.ts', 'src/http/client-cli.ts', 'src/hooks/pretool-claim.ts', ...legacyEntry],
   format: ['esm'],
   target: 'node18',
   outDir: 'dist',

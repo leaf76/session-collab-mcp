@@ -29,6 +29,8 @@ describe('Session Tools', () => {
       expect(response.reused).toBe(false);
       // Token default: no context restore unless opt-in
       expect(response.restored_context).toBeNull();
+      expect(response.scope).toBe('local-machine');
+      expect(response.db_path).toBe(':memory:');
     });
 
     it('should reuse an active session with the same project_root + name', async () => {

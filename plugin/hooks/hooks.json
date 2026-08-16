@@ -5,7 +5,24 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Session-collab ready. Start only for non-trivial/multi-session edits (restore_context default false). Batch claims; memory = short highlights.\"}'"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/run-pretool.sh\"",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Session-collab is same-machine only. Start only for non-trivial/multi-session edits. Batch claims; memory = short highlights. PreToolUse denies writes to files claimed by another session.\"}'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/run-pretool.sh\"",
+            "timeout": 15
           }
         ]
       }
@@ -15,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Save important findings: collab_memory_save (pinned=true). Then collab_session_end.\"}'"
+            "command": "echo '{\"systemMessage\": \"Save short findings: collab_memory_save. Then collab_session_end. Durable prefs belong in AI-Memory.\"}'"
           }
         ]
       }
@@ -26,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Context compaction. Save critical info: collab_memory_save (pinned=true).\"}'"
+            "command": "echo '{\"systemMessage\": \"Context compaction. Save short critical notes: collab_memory_save. Not a vault.\"}'"
           }
         ]
       }

@@ -35,12 +35,12 @@ export const MAX_RECALL_MAX_ITEMS = 20;
 export const SERVER_INSTRUCTIONS = `
 Session Collaboration: multi-agent file claims + short working memory.
 
-When: non-trivial edits or parallel sessions on the same repo. Skip pure Q&A/chat.
+When: non-trivial edits or parallel sessions on the same machine/repo. Skip pure Q&A/chat. Not a remote/git lock.
 
 Workflow: start (reuses same name+project) → collab_claim create (atomic; check optional) → optional memory_save → release → end.
 - Paths are normalized to project_root (absolute/relative same file = same claim).
 - create is enough to claim; check is probe-only. Batch files in one create.
 - start: restore_context default false. list/status/claim responses: detail default false.
-- memory: short finding/decision only (content capped). Not a long-term vault — use AI-Memory for durable prefs.
-- Do not overwrite another session's claimed work.
+- memory: short finding/decision only (rejected if over cap). Not a long-term vault — use AI-Memory for durable prefs.
+- Do not overwrite another session's claimed work. Claude Code PreToolUse can deny conflicting Write/Edit.
 `.trim();

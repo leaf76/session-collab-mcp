@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.6.0
+
+- Same-machine scope on session start (`scope`, `db_path`); DB path via `SESSION_COLLAB_DB` with unbranded default and legacy fallback
+- Claude Code PreToolUse denies Write/Edit when another session holds the claim
+- Reject oversized `collab_memory_save` instead of truncating
+- Run HTTP integration tests in default `npm test` and CI
+
 ## v2.5.1
 
 - Require Host/Origin (and bearer token when configured) on `/health`

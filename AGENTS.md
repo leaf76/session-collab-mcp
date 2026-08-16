@@ -4,20 +4,18 @@
 
 ## Overview
 
-TypeScript MCP server for Claude Code. Two modes:
-- **Lite Mode** (single session): Context persistence, 13 tools
-- **Full Mode** (multi-session): Collaboration + conflict detection, 50+ tools
-
-Mode auto-detected by active session count in `detectServerMode()`.
+TypeScript MCP server. **10 tools** (v2 action-based). Local SQLite WIP registry for same-machine multi-session claims — not a remote lock.
 
 ## Structure
 
 ```
 src/
 ├── cli.ts              # Entry: stdio JSON-RPC server
-├── constants.ts        # Version + 487-line server instructions
+├── constants.ts        # Version + short server instructions
+├── hooks/              # Claude Code PreToolUse claim guard
 ├── db/
-│   ├── queries.ts      # 2000+ lines SQL (GROUP_CONCAT with |||)
+│   ├── db-path.ts      # SESSION_COLLAB_DB + modern/legacy paths
+│   ├── queries.ts      # SQL (still monolithic; split later)
 │   ├── sqlite-adapter.ts
 │   ├── types.ts        # All type definitions
 │   └── __tests__/      # In-memory SQLite tests
@@ -25,7 +23,7 @@ src/
 │   ├── protocol.ts     # JSON-RPC types
 │   ├── schemas.ts      # Zod validation (all inputs)
 │   ├── server.ts       # Tool routing by prefix
-│   └── tools/          # 10 files, 50+ MCP tools ← see tools/AGENTS.md
+│   └── tools/          # 4 files, 10 MCP tools ← see tools/AGENTS.md
 ├── utils/
 │   ├── crypto.ts       # generateId()
 │   └── response.ts     # errorResponse(), successResponse()

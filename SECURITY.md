@@ -28,3 +28,4 @@ This project coordinates multi-session claims and optional HTTP access. Auth byp
 - Treat local MCP servers as running with the privileges of the OS user that starts them
 - Bind HTTP to loopback unless you set `SESSION_COLLAB_HTTP_TOKEN` and an allowed-host list
 - When a token is set, `/health` also requires `Authorization: Bearer …`
+- SQLite is per OS user; set `SESSION_COLLAB_DB` to point at a shared file if processes must see the same claims

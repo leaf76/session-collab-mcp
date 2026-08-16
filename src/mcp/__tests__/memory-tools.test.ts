@@ -76,7 +76,7 @@ describe('Memory Tools', () => {
       expect(response.error).toBe('INVALID_INPUT');
     });
 
-    it('should truncate long content and flag truncated', async () => {
+    it('should reject content over the cap instead of truncating', async () => {
       const longContent = 'x'.repeat(2000);
       const result = await handleMemoryTool(db, 'collab_memory_save', {
         session_id: sessionId,
@@ -85,17 +85,9 @@ describe('Memory Tools', () => {
         content: longContent,
       });
 
-      expect(result.isError).toBeFalsy();
+      expect(result.isError).toBe(true);
       const response = JSON.parse(result.content[0].text);
-      expect(response.truncated).toBe(true);
-      expect(response.content_length).toBeLessThanOrEqual(800);
-
-      const recall = await handleMemoryTool(db, 'collab_memory_recall', {
-        session_id: sessionId,
-        key: 'long_dump',
-      });
-      const recalled = JSON.parse(recall.content[0].text);
-      expect(recalled.memories[0].content.length).toBeLessThanOrEqual(800);
+      expect(response.error).toBe('MEMORY_TOO_LONG');
     });
   });
 

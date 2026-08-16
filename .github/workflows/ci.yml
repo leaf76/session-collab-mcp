@@ -33,7 +33,10 @@ jobs:
         run: npm run lint --if-present
 
       - name: Test
-        run: npm test --if-present
+        run: npm test -- --run
+
+      - name: HTTP tests
+        run: npm run test:http
 
       - name: Build
         run: npm run build --if-present

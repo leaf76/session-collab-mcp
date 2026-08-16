@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Local MCP server for session collaboration
-// Runs via stdio, stores data in ~/.claude/session-collab/collab.db
+// Runs via stdio, stores data in ~/.session-collab/collab.db (or legacy ~/.claude/session-collab)
 
 import { createInterface } from 'readline';
 import { createLocalDatabase, getDefaultDbPath } from './db/sqlite-adapter.js';

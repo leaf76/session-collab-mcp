@@ -7,7 +7,7 @@ Use this plugin only when your MCP client is Claude Code. The core server itself
 ## Features
 
 - Automatic Claude Code plugin wiring for the MCP server
-- Context persistence across conversations
+- PreToolUse deny on Write/Edit when another session claimed the file
 - Conflict avoidance with file/symbol claims
 - Protected files and session status summary
 

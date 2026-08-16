@@ -16,7 +16,7 @@ import {
   validateActiveSession,
   ERROR_CODES,
 } from '../../utils/response.js';
-import { clampMemoryContent, resolveRecallMaxItems } from '../../utils/memory-content.js';
+import { resolveRecallMaxItems } from '../../utils/memory-content.js';
 import {
   MAX_MEMORY_CONTENT_CHARS,
   DEFAULT_RECALL_MAX_ITEMS,
@@ -26,7 +26,7 @@ import {
 export const memoryTools: McpTool[] = [
   {
     name: 'collab_memory_save',
-    description: `Save short working-memory notes (finding/decision/state). Content capped at ${MAX_MEMORY_CONTENT_CHARS} chars. Not a long-term vault — use AI-Memory for durable prefs.`,
+    description: `Short in-flight notes only (finding/decision). Not a vault — use AI-Memory for durable prefs. Max ${MAX_MEMORY_CONTENT_CHARS} chars; longer content is rejected.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -45,7 +45,7 @@ export const memoryTools: McpTool[] = [
         },
         content: {
           type: 'string',
-          description: `Short content (max ${MAX_MEMORY_CONTENT_CHARS} chars; longer values are truncated)`,
+          description: `Short content (max ${MAX_MEMORY_CONTENT_CHARS} chars; longer values are rejected, not truncated)`,
         },
         priority: {
           type: 'number',
@@ -146,12 +146,18 @@ export async function handleMemoryTool(
         return validationError('category, key, and content are required');
       }
 
-      const clamped = clampMemoryContent(String(rawContent));
+      const content = String(rawContent);
+      if (content.length > MAX_MEMORY_CONTENT_CHARS) {
+        return errorResponse(
+          ERROR_CODES.MEMORY_TOO_LONG,
+          `Content is ${content.length} chars; max is ${MAX_MEMORY_CONTENT_CHARS}. Shorten it or store durable notes in AI-Memory.`
+        );
+      }
 
       const memory = await saveMemory(db, sessionId, {
         category,
         key,
-        content: clamped.content,
+        content,
         priority: (args.priority as number) ?? 50,
         pinned: (args.pinned as boolean) ?? false,
       });
@@ -163,11 +169,8 @@ export async function handleMemoryTool(
         key: memory.key,
         priority: memory.priority,
         pinned: memory.pinned === 1,
-        truncated: clamped.truncated,
-        content_length: clamped.content.length,
-        message: clamped.truncated
-          ? `Memory saved (truncated to ${MAX_MEMORY_CONTENT_CHARS} chars): ${category}/${key}`
-          : `Memory saved: ${category}/${key}`,
+        content_length: content.length,
+        message: `Memory saved: ${category}/${key}`,
       });
     }
 

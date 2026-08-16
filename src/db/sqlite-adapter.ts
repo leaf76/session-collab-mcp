@@ -4,9 +4,9 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync } from 'fs';
-import { dirname, join } from 'path';
-import { homedir } from 'os';
+import { dirname } from 'path';
 import { splitMigrationStatements } from './migrations.js';
+import { getDefaultDbPath } from './db-path.js';
 
 // Polyfill crypto.randomUUID for Node.js
 if (typeof globalThis.crypto === 'undefined') {
@@ -33,6 +33,7 @@ export interface PreparedStatement {
 export interface DatabaseAdapter {
   prepare(sql: string): PreparedStatement;
   batch(statements: PreparedStatement[]): Promise<QueryResult<unknown>[]>;
+  getStoragePath?(): string;
 }
 
 class SqlitePreparedStatement implements PreparedStatement {
@@ -82,8 +83,10 @@ class SqlitePreparedStatement implements PreparedStatement {
 
 class SqliteDatabase implements DatabaseAdapter {
   private db: Database.Database;
+  private readonly dbPath: string;
 
   constructor(dbPath: string) {
+    this.dbPath = dbPath;
     // Ensure directory exists
     const dir = dirname(dbPath);
     if (!existsSync(dir)) {
@@ -160,16 +163,16 @@ class SqliteDatabase implements DatabaseAdapter {
     this.db.prepare(sql).run();
   }
 
+  getStoragePath(): string {
+    return this.dbPath;
+  }
+
   close(): void {
     this.db.close();
   }
 }
 
-// Get default database path
-export function getDefaultDbPath(): string {
-  const dataDir = join(homedir(), '.claude', 'session-collab');
-  return join(dataDir, 'collab.db');
-}
+export { getDefaultDbPath } from './db-path.js';
 
 // Create a local SQLite database
 export function createLocalDatabase(dbPath?: string): SqliteDatabase {

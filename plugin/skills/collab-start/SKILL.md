@@ -6,13 +6,13 @@ allowed-tools: mcp__session-collab__*
 
 # Session Collaboration Startup
 
-Prevent file conflicts when multiple agent sessions work on the same codebase. **Token-conscious by default.**
+Prevent file conflicts when multiple agent sessions work on the **same machine**. Not a remote Git lock. **Token-conscious by default.**
 
 ## Roles (do not mix)
 
 | Store | Use for |
 |-------|---------|
-| **session-collab memory** | Short in-flight notes for *this* repo/session (finding/decision/state). Content capped. |
+| **session-collab memory** | Short in-flight notes for *this* repo/session (finding/decision/state). Over-cap content is **rejected**. |
 | **AI-Memory vault** (`~/AI-Memory`) | Durable cross-provider prefs, profile, project decisions |
 
 Do **not** dump transcripts into collab memory.

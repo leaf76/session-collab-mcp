@@ -86,7 +86,7 @@ npm run test         # Run tests
 
 ## Data Storage
 
-SQLite database at `~/.claude/session-collab/collab.db`
+SQLite is same-machine only. Default `~/.session-collab/collab.db` (legacy `~/.claude/session-collab/collab.db` if that file already exists). Override with `SESSION_COLLAB_DB`.
 - WAL mode for multi-process safety
 - No remote server required
 - Works offline

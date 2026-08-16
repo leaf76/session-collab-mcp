@@ -1,6 +1,6 @@
 {
   "name": "session-collab-mcp",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "description": "Provider-agnostic Model Context Protocol (MCP) collaboration server: claim files, persist working memory, and prevent multi-agent session conflicts",
   "license": "MIT",
   "author": "leaf76",
@@ -22,7 +22,8 @@
   "bin": {
     "session-collab-mcp": "dist/cli.js",
     "session-collab-http": "dist/http/cli.js",
-    "session-collab": "dist/http/client-cli.js"
+    "session-collab": "dist/http/client-cli.js",
+    "session-collab-pretool": "dist/hooks/pretool-claim.js"
   },
   "files": [
     "bin",
