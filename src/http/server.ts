@@ -305,16 +305,16 @@ export function createHttpServer(db: DatabaseAdapter, options: HttpServerOptions
       const method = req.method ?? 'GET';
       const url = new URL(req.url ?? '/', 'http://localhost');
 
-      if (method === 'GET' && url.pathname === '/health') {
-        sendJson(res, 200, { ok: true, data: { status: 'ok' } }, traceId);
-        return;
-      }
-
       enforceHttpSecurity(req, {
         host,
         allowedHosts: options.allowedHosts,
         apiToken: options.apiToken,
       });
+
+      if (method === 'GET' && url.pathname === '/health') {
+        sendJson(res, 200, { ok: true, data: { status: 'ok' } }, traceId);
+        return;
+      }
 
       if (method === 'GET' && url.pathname === '/v1/tools') {
         sendJson(res, 200, { ok: true, data: { tools: getMcpTools() } }, traceId);
@@ -481,8 +481,7 @@ export function createHttpServer(db: DatabaseAdapter, options: HttpServerOptions
         return;
       }
 
-      const message = error instanceof Error ? error.message : 'Unexpected error';
-      sendHttpError(res, 500, 'INTERNAL_ERROR', message, traceId);
+      sendHttpError(res, 500, 'INTERNAL_ERROR', 'Internal error', traceId);
     }
   });
 }

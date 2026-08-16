@@ -201,3 +201,39 @@ describe.runIf(shouldRun)('HTTP Server Integration', () => {
     expect(callBody.result.content[0].text).toContain('session_id');
   });
 });
+
+describe.runIf(shouldRun)('HTTP Server token mode', () => {
+  let db: TestDatabase;
+  let server: ReturnType<typeof createHttpServer>;
+  let baseUrl: string;
+  const token = 'test-token';
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    server = createHttpServer(db, { host: '127.0.0.1', apiToken: token });
+    await new Promise<void>((resolve, reject) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+      server.on('error', reject);
+    });
+    const address = server.address();
+    if (typeof address === 'string' || address === null) {
+      throw new Error('Unexpected server address');
+    }
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    db.close();
+  });
+
+  it('requires a bearer token for /health when apiToken is set', async () => {
+    const unauth = await fetch(`${baseUrl}/health`);
+    expect(unauth.status).toBe(401);
+
+    const auth = await fetch(`${baseUrl}/health`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(auth.status).toBe(200);
+  });
+});

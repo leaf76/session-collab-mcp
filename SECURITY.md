@@ -26,3 +26,5 @@ This project coordinates multi-session claims and optional HTTP access. Auth byp
 - Prefer least privilege and explicit allowlists where the project provides them
 - Do not commit secrets, tokens, or machine-specific credentials
 - Treat local MCP servers as running with the privileges of the OS user that starts them
+- Bind HTTP to loopback unless you set `SESSION_COLLAB_HTTP_TOKEN` and an allowed-host list
+- When a token is set, `/health` also requires `Authorization: Bearer …`
